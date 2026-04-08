@@ -1,4 +1,5 @@
 package com.eve.companion
+
 import android.app.*
 import android.content.Intent
 import android.graphics.PixelFormat
@@ -89,7 +90,7 @@ fun EveBubble(wm: WindowManager, params: WindowManager.LayoutParams, view: View,
                 history.forEach { (r, c) -> put(JSONObject().put("role", r).put("content", c)) }
                 put(JSONObject().put("role", "user").put("content", msg))
             }
-            val body = JSONObject().put("model", "gemma3").put("messages", msgs).put("max_tokens", 300).put("temperature", 0.8).put("stream", false)
+            val body = JSONObject().put("model", "gemma-4-4b-it").put("messages", msgs).put("max_tokens", 300).put("temperature", 0.8).put("stream", false)
             val conn = (URL("http://localhost:8080/v1/chat/completions").openConnection() as HttpURLConnection).apply {
                 requestMethod = "POST"; setRequestProperty("Content-Type", "application/json"); doOutput = true; connectTimeout = 10000; readTimeout = 60000
             }
@@ -127,7 +128,8 @@ fun EveBubble(wm: WindowManager, params: WindowManager.LayoutParams, view: View,
                                 val m = input.trim()
                                 input = ""; thinking = true; chat += "\nYou: $m"
                                 scope.launch { val r = ask(m); chat += "\nEve: $r"; thinking = false }
-                                }
+                            }
+                        }) { Text("→", color = Color.White, fontSize = 20.sp) }
                     }
                 }
             }
