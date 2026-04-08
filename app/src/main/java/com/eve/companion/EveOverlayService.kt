@@ -184,13 +184,13 @@ fun EveBubble(
                                     }
                                 },
                             contentAlignment = Alignment.Center
-                                },
-                            contentAlignment = Alignment.Center
                         ) {
                             Text(">", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 18.sp)
                         }
                     }
                 }
+            }
+        }
             }
         }
         Box(
