@@ -175,15 +175,15 @@ fun EveBubble(
                                         val m = input.trim()
                                         input = ""
                                         thinking = true
-                                        chat += "
-You: $m"
+                                        chat += "\nYou: $m"
                                         scope.launch {
                                             val r = ask(m)
-                                            chat += "
-Eve: $r"
+                                            chat += "\nEve: $r"
                                             thinking = false
                                         }
                                     }
+                                },
+                            contentAlignment = Alignment.Center
                                 },
                             contentAlignment = Alignment.Center
                         ) {
