@@ -4,9 +4,9 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import android.provider.Settings
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
@@ -23,25 +23,50 @@ import androidx.compose.ui.unit.*
 import androidx.core.content.ContextCompat
 
 class MainActivity : ComponentActivity() {
-    private val overlayLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
-        if (Settings.canDrawOverlays(this)) startEve()
-    }
     
-    override fun onCreate(s: Bundle?) {
-        super.onCreate(s)
-        setContent { MaterialTheme { EveHome { requestAndLaunch() } } }
-    }
-    
-    private fun requestAndLaunch() {
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        
+        // If already have permission, start immediately
         if (Settings.canDrawOverlays(this)) {
             startEve()
-        } else {
+            return
+        }
+        
+        setContent { 
+            MaterialTheme { 
+                EveHome { requestOverlayPermission() } 
+            } 
+        }
+    }
+    
+    override fun onResume() {
+        super.onResume()
+        // Check again when user returns from settings
+        if (Settings.canDrawOverlays(this)) {
+            startEve()
+        }
+    }
+    
+    private fun requestOverlayPermission() {
+        Toast.makeText(this, "Please enable 'Display over other apps' for Eve", Toast.LENGTH_LONG).show()
+        
+        // Try multiple intent options
+        val intents = listOf(
+            Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")),
+            Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName")),
+            Intent(Settings.ACTION_APPLICATION_SETTINGS),
+            Intent(Settings.ACTION_SETTINGS)
+        )
+        
+        for (intent in intents) {
             try {
-                val intent = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName"))
-                overlayLauncher.launch(intent)
+                if (intent.resolveActivity(packageManager) != null) {
+                    startActivity(intent)
+                    return
+                }
             } catch (e: Exception) {
-                // Fallback to app settings
-                overlayLauncher.launch(Intent(Settings.ACTION_APPLICATION_SETTINGS))
+                continue
             }
         }
     }
@@ -67,6 +92,7 @@ fun EveHome(onLaunch: () -> Unit) {
             }
             Text("EVE", fontSize = 48.sp, fontWeight = FontWeight.Black, letterSpacing = 14.sp, color = Color(0xFFEE88FF))
             Text("local private always on", fontSize = 12.sp, color = Color(0xFFBB88CC), letterSpacing = 2.sp, textAlign = TextAlign.Center)
+            Text("Tap below, then enable 'Display over other apps'", fontSize = 11.sp, color = Color(0xFFBB88CC).copy(alpha = 0.7f), textAlign = TextAlign.Center, modifier = Modifier.padding(horizontal = 32.dp))
             Button(onClick = onLaunch, modifier = Modifier.fillMaxWidth(0.7f).height(54.dp), colors = ButtonDefaults.buttonColors(Color(0xFFBB00FF)), shape = RoundedCornerShape(16.dp)) {
                 Text("WAKE EVE", fontWeight = FontWeight.Bold, letterSpacing = 4.sp)
             }
