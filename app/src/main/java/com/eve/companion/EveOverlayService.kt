@@ -124,10 +124,10 @@ fun EveBubble(wm: WindowManager, params: WindowManager.LayoutParams, view: View,
                             textStyle = LocalTextStyle.current.copy(fontSize = 13.sp))
                         Box(Modifier.size(40.dp).background(Brush.radialGradient(listOf(Color(0xFFBB00FF), Color(0xFFFF006E))), CircleShape).clickable {
                             if (input.isNotBlank() && !thinking) {
-                                val msg = input.trim(); input = ""; thinking = true; chat += "
-                                val msg = input.trim(); input = ""; thinking = true; chat += "\nYou: $msg"
-                                scope.launch { val r = ask(msg); chat += "\nEve: $r"; thinking = false }
-                        }, Alignment.Center) { Text(">", color = Color.White, fontWeight = FontWeight.Bold) }
+                                val m = input.trim()
+                                input = ""; thinking = true; chat += "\nYou: $m"
+                                scope.launch { val r = ask(m); chat += "\nEve: $r"; thinking = false }
+                                }
                     }
                 }
             }

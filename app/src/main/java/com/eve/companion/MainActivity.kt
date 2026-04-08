@@ -51,8 +51,7 @@ fun EveHome(onLaunch: () -> Unit) {
                 Box(Modifier.size(100.dp).background(Brush.radialGradient(listOf(Color(0xFFEE88FF), Color(0xFFBB00FF), Color(0xFF7700AA))), CircleShape))
                 Box(Modifier.size(22.dp).offset((-18).dp, (-18).dp).background(Color.White.copy(0.35f), CircleShape))
             }
-            Text("EVE", fontSize = 48.sp, fontWeight = FontWeight.Black, letterSpacing = 14.sp,
-                brush = Brush.horizontalGradient(listOf(Color(0xFFEE88FF), Color(0xFFFF006E))))
+            Text("EVE", fontSize = 48.sp, fontWeight = FontWeight.Black, letterSpacing = 14.sp, color = Color(0xFFEE88FF))
             Text("local  private  always on", fontSize = 12.sp, color = Color(0xFFBB88CC), letterSpacing = 2.sp, textAlign = TextAlign.Center)
             Button(onClick = onLaunch, modifier = Modifier.fillMaxWidth(0.7f).height(54.dp),
                 colors = ButtonDefaults.buttonColors(Color(0xFFBB00FF)), shape = RoundedCornerShape(16.dp)) {
