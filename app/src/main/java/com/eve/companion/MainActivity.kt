@@ -27,7 +27,6 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         
-        // If already have permission, start immediately
         if (Settings.canDrawOverlays(this)) {
             startEve()
             return
@@ -35,39 +34,29 @@ class MainActivity : ComponentActivity() {
         
         setContent { 
             MaterialTheme { 
-                EveHome { requestOverlayPermission() } 
+                EveHome { openAppSettings() } 
             } 
         }
     }
     
     override fun onResume() {
         super.onResume()
-        // Check again when user returns from settings
         if (Settings.canDrawOverlays(this)) {
             startEve()
         }
     }
     
-    private fun requestOverlayPermission() {
-        Toast.makeText(this, "Please enable 'Display over other apps' for Eve", Toast.LENGTH_LONG).show()
+    private fun openAppSettings() {
+        Toast.makeText(this, "Enable 'Display over other apps' for Eve", Toast.LENGTH_LONG).show()
         
-        // Try multiple intent options
-        val intents = listOf(
-            Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")),
-            Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName")),
-            Intent(Settings.ACTION_APPLICATION_SETTINGS),
-            Intent(Settings.ACTION_SETTINGS)
-        )
-        
-        for (intent in intents) {
-            try {
-                if (intent.resolveActivity(packageManager) != null) {
-                    startActivity(intent)
-                    return
-                }
-            } catch (e: Exception) {
-                continue
+        try {
+            val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                data = Uri.parse("package:$packageName")
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
+            startActivity(intent)
+        } catch (e: Exception) {
+            // Last resort: just show instructions
         }
     }
     
@@ -92,9 +81,9 @@ fun EveHome(onLaunch: () -> Unit) {
             }
             Text("EVE", fontSize = 48.sp, fontWeight = FontWeight.Black, letterSpacing = 14.sp, color = Color(0xFFEE88FF))
             Text("local private always on", fontSize = 12.sp, color = Color(0xFFBB88CC), letterSpacing = 2.sp, textAlign = TextAlign.Center)
-            Text("Tap below, then enable 'Display over other apps'", fontSize = 11.sp, color = Color(0xFFBB88CC).copy(alpha = 0.7f), textAlign = TextAlign.Center, modifier = Modifier.padding(horizontal = 32.dp))
+            Text("Tap below → Enable 'Display over other apps' → Return", fontSize = 11.sp, color = Color(0xFFBB88CC).copy(alpha = 0.7f), textAlign = TextAlign.Center, modifier = Modifier.padding(horizontal = 32.dp))
             Button(onClick = onLaunch, modifier = Modifier.fillMaxWidth(0.7f).height(54.dp), colors = ButtonDefaults.buttonColors(Color(0xFFBB00FF)), shape = RoundedCornerShape(16.dp)) {
-                Text("WAKE EVE", fontWeight = FontWeight.Bold, letterSpacing = 4.sp)
+                Text("OPEN SETTINGS", fontWeight = FontWeight.Bold, letterSpacing = 4.sp)
             }
         }
     }
