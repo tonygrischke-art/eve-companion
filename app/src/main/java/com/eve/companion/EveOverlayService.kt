@@ -191,7 +191,6 @@ fun EveBubble(
                 }
             }
         }
-            }
         }
         Box(
             Modifier.size(62.dp)
