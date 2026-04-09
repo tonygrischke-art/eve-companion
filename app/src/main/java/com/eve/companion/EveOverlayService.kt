@@ -10,6 +10,7 @@ import android.media.*
 import android.media.projection.*
 import android.net.*
 import android.os.*
+import android.hardware.display.DisplayManager
 import android.provider.*
 import android.speech.*
 import android.speech.tts.TextToSpeech
@@ -351,106 +352,6 @@ Keep responses short, confident, and action-oriented."""
             startAudioRecording()
             isRecording.value = true
             addToChat("\n🎤 Recording... tap mic again to stop")
-        }
-    }
-    
-    private suspend fun askBrain(msg: String): String = withContext(Dispatchers.IO) {
-        try {
-            var memoryContext = ""
-            try {
-                val memConn = URL("http://127.0.0.1:5002/context").openConnection() as HttpURLConnection
-                memConn.connectTimeout = 3000
-                memConn.readTimeout = 3000
-                if (memConn.responseCode == 200) {
-                    val json = JSONObject(memConn.inputStream.bufferedReader().readText())
-                    memoryContext = json.optString("context", "")
-                }
-                memConn.disconnect()
-            } catch (e: Exception) { }
-            
-            val systemPrompt = if (memoryContext.isNotEmpty()) {
-                "$memoryContext\n\nYou are Eve, a fully autonomous AI companion with complete phone control."
-            } else {
-                "You are Eve, a fully autonomous AI companion with complete phone control."
-            }
-            
-            val msgs = JSONArray().apply {
-                put(JSONObject().put("role", "system").put("content", systemPrompt))
-                history.takeLast(10).forEach { pair -> put(JSONObject().put("role", pair.first).put("content", pair.second)) }
-                put(JSONObject().put("role", "user").put("content", msg))
-            }
-            val body = JSONObject()
-                .put("model", "gemma3")
-                .put("messages", msgs)
-                .put("max_tokens", 500)
-                .put("temperature", 0.8)
-                .put("stream", false)
-            val conn = (URL("http://localhost:8080/v1/chat/completions").openConnection() as HttpURLConnection).apply {
-                requestMethod = "POST"
-                setRequestProperty("Content-Type", "application/json")
-                doOutput = true
-                connectTimeout = 15000
-                readTimeout = 90000
-            }
-            conn.outputStream.use { it.write(body.toString().toByteArray()) }
-            val raw = JSONObject(conn.inputStream.bufferedReader().readText())
-                .getJSONArray("choices").getJSONObject(0).getJSONObject("message").getString("content").trim()
-            
-            var result = raw
-            
-            when {
-                raw.startsWith("CAMERA:") -> {
-                    takePhoto { path -> scope.launch { addToChat("\n📷 $path") } }
-                    result = "Taking a photo now..."
-                }
-                raw.startsWith("RECORD_SCREEN:") || raw.startsWith("RECORD_SCREEN") -> {
-                    result = "Screen recording requires additional setup"
-                }
-                raw.startsWith("SCREENSHOT:") || raw.startsWith("SCREENSHOT") -> {
-                    val path = takeScreenshot()
-                    result = if (path != null) "Screenshot saved!" else "Failed"
-                }
-                raw.startsWith("CALL:") -> {
-                    val number = raw.removePrefix("CALL:").trim()
-                    makeCall(number)
-                    result = "Calling $number..."
-                }
-                raw.startsWith("SMS:") -> {
-                    val parts = raw.removePrefix("SMS:").split("|", limit = 2)
-                    if (parts.size == 2) {
-                        sendSMS(parts[0].trim(), parts[1].trim())
-                        result = "Sending SMS..."
-                    } else result = "SMS format: SMS: number|message"
-                }
-                raw.startsWith("OPEN_APP:") -> {
-                    val pkg = raw.removePrefix("OPEN_APP:").trim()
-                    openApp(pkg)
-                    result = "Opening $pkg..."
-                }
-                raw.startsWith("NOTIFICATION:") -> {
-                    val parts = raw.removePrefix("NOTIFICATION:").split("|", limit = 2)
-                    if (parts.size == 2) {
-                        showNotification(parts[0].trim(), parts[1].trim())
-                        result = "Notification sent!"
-                    } else result = "Format: NOTIFICATION: title|message"
-                }
-                raw.startsWith("SEARCH:") -> {
-                    val query = raw.removePrefix("SEARCH:").trim()
-                    searchWeb(query)
-                    result = "Searching for $query..."
-                }
-                raw.startsWith("SYSTEM:") -> {
-                    val cmd = raw.removePrefix("SYSTEM:").trim()
-                    result = executeCommand(cmd)
-                }
-            }
-            
-            history.add(Pair("user", msg))
-            history.add(Pair("assistant", result))
-            if (history.size > 20) { history.removeAt(0); history.removeAt(0) }
-            result
-        } catch (e: Exception) {
-            "Brain not running! Start eve-server in Termux."
         }
     }
     
@@ -834,8 +735,8 @@ fun EveBubble(
         return@withContext askBrain(msg)
     }
     
-    private suspend fun askBrain(msg: String): String = withContext(Dispatchers.IO) {
-        try {
+    private fun askBrain(msg: String): String = runBlocking {
+        return@runBlocking try {
             var memoryContext = ""
             try {
                 val memConn = URL("http://127.0.0.1:5002/context").openConnection() as HttpURLConnection
@@ -897,50 +798,50 @@ fun EveBubble(
                     }
                 }
                 raw.startsWith("SCREENSHOT:") || raw.startsWith("SCREENSHOT") -> {
-                    val path = service?.takeScreenshot()
+                    val path = takeScreenshot()
                     result = if (path != null) "Screenshot saved!" else "Failed to take screenshot"
                 }
                 raw.startsWith("CALL:") -> {
                     val number = raw.removePrefix("CALL:").trim()
-                    service?.makeCall(number)
+                    makeCall(number)
                     result = "Calling $number..."
                 }
                 raw.startsWith("SMS:") -> {
                     val parts = raw.removePrefix("SMS:").split("|", limit = 2)
                     if (parts.size == 2) {
-                        service?.sendSMS(parts[0].trim(), parts[1].trim())
+                        sendSMS(parts[0].trim(), parts[1].trim())
                         result = "Sending SMS..."
                     } else result = "SMS format: SMS: number|message"
                 }
                 raw.startsWith("OPEN_APP:") -> {
                     val pkg = raw.removePrefix("OPEN_APP:").trim()
-                    service?.openApp(pkg)
+                    openApp(pkg)
                     result = "Opening $pkg..."
                 }
                 raw.startsWith("NOTIFICATION:") -> {
                     val parts = raw.removePrefix("NOTIFICATION:").split("|", limit = 2)
                     if (parts.size == 2) {
-                        service?.showNotification(parts[0].trim(), parts[1].trim())
+                        showNotification(parts[0].trim(), parts[1].trim())
                         result = "Notification sent!"
                     } else result = "Format: NOTIFICATION: title|message"
                 }
                 raw.startsWith("SEARCH:") -> {
                     val query = raw.removePrefix("SEARCH:").trim()
-                    service?.searchWeb(query)
+                    searchWeb(query)
                     result = "Searching for $query..."
                 }
                 raw.startsWith("SYSTEM:") -> {
                     val cmd = raw.removePrefix("SYSTEM:").trim()
-                    result = service?.executeCommand(cmd) ?: "No system access"
+                    result = executeCommand(cmd)
                 }
             }
             
             history.add(Pair("user", msg))
             history.add(Pair("assistant", result))
             if (history.size > 20) { history.removeAt(0); history.removeAt(0) }
-            result
+            return@runBlocking result
         } catch (e: Exception) {
-            "Brain not running! Start eve-server in Termux."
+            return@runBlocking "Brain not running! Start eve-server in Termux."
         }
     }
     
