@@ -73,6 +73,10 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private fun requestAllPermissions() {
+        permissionLauncher.launch(requiredPermissions.toTypedArray())
+    }
+
     private fun requestOverlay() {
         try {
             startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,

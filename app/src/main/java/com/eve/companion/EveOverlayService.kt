@@ -16,6 +16,8 @@ import android.speech.tts.TextToSpeech
 import android.util.*
 import android.util.Pair
 import android.view.*
+import android.view.Display
+import android.view.DisplayManager
 import android.view.WindowManager
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.*
@@ -292,6 +294,11 @@ Keep responses short, confident, and action-oriented."""
     fun takePhoto(callback: (String?) -> Unit) {
         scope.launch(Dispatchers.Main) {
             try {
+                if (ActivityCompat.checkSelfPermission(this@EveOverlayService, android.Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+                    callback("Camera permission not granted")
+                    return@launch
+                }
+                
                 val time = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
                 val file = File(getExternalFilesDir(Environment.DIRECTORY_PICTURES), "EVE_$time.jpg")
                 
@@ -303,11 +310,6 @@ Keep responses short, confident, and action-oriented."""
                 
                 if (cameraId == null) {
                     callback("No camera found")
-                    return@launch
-                }
-                
-                if (ActivityCompat.checkSelfPermission(this@EveOverlayService, android.Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
-                    callback("Camera permission not granted")
                     return@launch
                 }
                 
