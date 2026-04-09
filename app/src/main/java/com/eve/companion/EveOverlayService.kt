@@ -14,10 +14,10 @@ import android.provider.*
 import android.speech.*
 import android.speech.tts.TextToSpeech
 import android.util.*
+import android.util.Pair
 import android.view.*
+import android.view.WindowManager
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.camera.core.*
-import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.*
 import androidx.compose.foundation.gestures.detectDragGestures
@@ -36,6 +36,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.*
 import androidx.core.app.ActivityCompat
+import androidx.core.app.NotificationCompat
 import androidx.core.content.*
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.*
@@ -70,9 +71,6 @@ class EveOverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, SavedS
     private var mediaRecorder: MediaRecorder? = null
     private var isRecording = mutableStateOf(false)
     private var recordingStartTime = 0L
-    private var cameraProvider: ProcessCameraProvider? = null
-    private var camera: Camera? = null
-    private var previewView: PreviewView? = null
     
     private val chatFlow = MutableStateFlow("Eve: Hey! I am fully autonomous now. What would you like me to do?")
     val chat: StateFlow<String> = chatFlow
@@ -308,41 +306,63 @@ Keep responses short, confident, and action-oriented."""
                     return@launch
                 }
                 
-                val imageReader = ImageReader.newInstance(1920, 1080, ImageFormat.JPEG, 1)
-                val readerSurface = imageReader.surface
-                
-                val captureBuilder = cameraManager.getDeviceState(cameraId.toString())?.let {
-                    cameraManager.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE).apply {
-                        addTarget(readerSurface)
-                        set(CaptureRequest.CONTROL_MODE, CameraControl.CONTROL_MODE_AUTO)
-                    }
-                } ?: run {
-                    if (ActivityCompat.checkSelfPermission(this@EveOverlayService, android.Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
-                        callback("Camera permission not granted")
-                        return@launch
-                    }
-                    cameraManager.openCamera(cameraId, object : CameraDevice.StateCallback() {
-                        override fun onOpened(camera: CameraDevice) {
-                            val request = camera.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE).apply {
-                                addTarget(readerSurface)
-                                set(CaptureRequest.CONTROL_MODE, CameraControl.CONTROL_MODE_AUTO)
-                            }.build()
-                            camera.capture(request, object : CameraCaptureSession.CaptureCallback() {
-                                override fun onCaptureCompleted(session: CameraCaptureSession, request: CaptureRequest, result: TotalCaptureResult) {
-                                    val img = imageReader.acquireLatestImage()
-                                    img?.close()
-                                }
-                            }, Handler(Looper.getMainLooper()))
-                        }
-                        override fun onDisconnected(camera: CameraDevice) { camera.close() }
-                        override fun onError(camera: CameraDevice, e: Int) { camera.close() }
-                    }, Handler(Looper.getMainLooper()))
+                if (ActivityCompat.checkSelfPermission(this@EveOverlayService, android.Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+                    callback("Camera permission not granted")
                     return@launch
                 }
                 
-                callback(file.absolutePath)
-                addToChat("\n📷 Photo saved: ${file.name}")
-                speak("Photo taken and saved.")
+                val imageReader = ImageReader.newInstance(1920, 1080, ImageFormat.JPEG, 2)
+                imageReader.setOnImageAvailableListener({ reader ->
+                    val image = reader.acquireLatestImage()
+                    image?.close()
+                }, Handler(Looper.getMainLooper()))
+                
+                cameraManager.openCamera(cameraId, object : CameraDevice.StateCallback() {
+                    override fun onOpened(camera: CameraDevice) {
+                        try {
+                            val session = camera.createCaptureSession(listOf(imageReader.surface), object : CameraCaptureSession.StateCallback() {
+                                override fun onConfigured(session: CameraCaptureSession) {
+                                    try {
+                                        val request = camera.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE).apply {
+                                            addTarget(imageReader.surface)
+                                            set(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_AUTO)
+                                        }.build()
+                                        session.capture(request, object : CameraCaptureSession.CaptureCallback() {
+                                            override fun onCaptureCompleted(session: CameraCaptureSession, request: CaptureRequest, result: TotalCaptureResult) {
+                                                scope.launch(Dispatchers.Main) {
+                                                    callback(file.absolutePath)
+                                                    addToChat("\n📷 Photo saved: ${file.name}")
+                                                    speak("Photo taken and saved.")
+                                                }
+                                                session.close()
+                                                camera.close()
+                                            }
+                                            override fun onCaptureFailed(session: CameraCaptureSession, request: CaptureRequest, failure: CaptureFailure) {
+                                                session.close()
+                                                camera.close()
+                                                scope.launch { callback("Capture failed") }
+                                            }
+                                        }, Handler(Looper.getMainLooper()))
+                                    } catch (e: Exception) {
+                                        session.close()
+                                        camera.close()
+                                        scope.launch { callback("Error: ${e.message}") }
+                                    }
+                                }
+                                override fun onConfigureFailed(session: CameraCaptureSession) {
+                                    session.close()
+                                    camera.close()
+                                    scope.launch { callback("Session config failed") }
+                                }
+                            }, Handler(Looper.getMainLooper()))
+                        } catch (e: Exception) {
+                            camera.close()
+                            scope.launch { callback("Error: ${e.message}") }
+                        }
+                    }
+                    override fun onDisconnected(camera: CameraDevice) { camera.close() }
+                    override fun onError(camera: CameraDevice, error: Int) { camera.close() }
+                }, Handler(Looper.getMainLooper()))
             } catch (e: Exception) {
                 callback("Error: ${e.message}")
             }
@@ -353,7 +373,8 @@ Keep responses short, confident, and action-oriented."""
     fun captureScreen(resultCode: Int, data: Intent) {
         scope.launch(Dispatchers.IO) {
             try {
-                val projection = mediaProjection ?: MediaProjectionManager(this@EveOverlayService).getMediaProjection(resultCode, data)
+                val mpm = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+                val projection = mediaProjection ?: mpm.getMediaProjection(resultCode, data)
                 mediaProjection = projection
                 
                 val time = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
@@ -386,10 +407,10 @@ Keep responses short, confident, and action-oriented."""
                 }, Handler(Looper.getMainLooper()))
                 
                 val display = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                    display?.defaultDisplay
+                    display
                 } else {
                     @Suppress("DEPRECATION")
-                    windowManager.defaultDisplay
+                    wm.defaultDisplay
                 }
                 
                 val virtualDisplay = projection.createVirtualDisplay(
@@ -437,18 +458,18 @@ Keep responses short, confident, and action-oriented."""
     fun takeScreenshot(): String? {
         return try {
             val dpy = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                display?.defaultDisplay
+                display
             } else {
                 @Suppress("DEPRECATION")
-                windowManager.defaultDisplay
+                wm.defaultDisplay
             }
             val dm = DisplayMetrics()
             dpy?.getRealMetrics(dm)
             
             val bitmap = Bitmap.createBitmap(dm.widthPixels, dm.heightPixels, Bitmap.Config.ARGB_8888)
-            val canvas = Canvas(bitmap)
-            val rootView = windowManager.defaultDisplay.decorView
-            rootView.draw(canvas)
+            val canvas = android.graphics.Canvas(bitmap)
+            val rootView = dpy?.decorView
+            rootView?.draw(canvas)
             
             val time = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
             val file = File(getExternalFilesDir(Environment.DIRECTORY_PICTURES), "EVE_SCREENSHOT_$time.png")
@@ -644,7 +665,7 @@ fun EveBubble(
                 put(JSONObject().put("role", "system").put("content", (context as? EveOverlayService)?.let { 
                     "You are Eve, a fully autonomous AI companion with complete phone control." 
                 } ?: "You are Eve."))
-                history.takeLast(10).forEach { (r, c) -> put(JSONObject().put("role", r).put("content", c)) }
+                history.takeLast(10).forEach { pair -> put(JSONObject().put("role", pair.first).put("content", pair.second)) }
                 put(JSONObject().put("role", "user").put("content", msg))
             }
             val body = JSONObject()
@@ -723,8 +744,8 @@ fun EveBubble(
                 }
             }
             
-            history.add("user" to msg)
-            history.add("assistant" to result)
+            history.add(Pair("user", msg))
+            history.add(Pair("assistant", result))
             if (history.size > 20) { history.removeAt(0); history.removeAt(0) }
             result
         } catch (e: Exception) {
