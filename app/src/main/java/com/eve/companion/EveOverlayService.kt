@@ -237,7 +237,9 @@ Keep responses short, confident, and action-oriented."""
                         onClose = { },
                         chat = chat,
                         isRecording = isRecording,
-                        onExpand = { expanded.value = it }
+                        onExpand = { expanded.value = it },
+                        onMicPressed = { onMicPressed() },
+                        onSendMessage = { msg -> callBrain(msg) }
                     )
                 }
             }
@@ -790,7 +792,9 @@ fun EveBubble(
     onClose: () -> Unit,
     chat: StateFlow<String>,
     isRecording: State<Boolean>,
-    onExpand: (Boolean) -> Unit
+    onExpand: (Boolean) -> Unit,
+    onMicPressed: () -> Unit,
+    onSendMessage: (String) -> String
 ) {
     var expanded by remember { mutableStateOf(true) }
     var chatText by remember { mutableStateOf("Eve: Hey! What can I do for you?") }
@@ -838,7 +842,7 @@ fun EveBubble(
                 if (text.isNotBlank()) {
                     thinking = true
                     chatText += "\n\n🗣️ You: $text"
-                    val r = callBrain(text)
+                    val r = onSendMessage(text)
                     chatText += "\n\n💜 Eve: $r"
                     thinking = false
                     speak(r)
@@ -927,7 +931,7 @@ fun EveBubble(
                                         input = ""
                                         thinking = true
                                         chatText += "\n\n👤 You: $m"
-                                        val r = callBrain(m)
+                                        val r = onSendMessage(m)
                                         chatText += "\n\n💜 Eve: $r"
                                         thinking = false
                                         speak(r)
