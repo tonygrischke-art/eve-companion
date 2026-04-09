@@ -342,7 +342,7 @@ Keep responses short, confident, and action-oriented."""
             if (!text.startsWith("STT error") && !text.startsWith("No audio") && text.isNotBlank()) {
                 addToChat("\n\n🗣️ You: $text")
                 scope.launch {
-                    val r = ask(text)
+                    val r = askBrain(text)
                     addToChat("\n\n💜 Eve: $r")
                     speak(r)
                 }
@@ -351,6 +351,106 @@ Keep responses short, confident, and action-oriented."""
             startAudioRecording()
             isRecording.value = true
             addToChat("\n🎤 Recording... tap mic again to stop")
+        }
+    }
+    
+    private suspend fun askBrain(msg: String): String = withContext(Dispatchers.IO) {
+        try {
+            var memoryContext = ""
+            try {
+                val memConn = URL("http://127.0.0.1:5002/context").openConnection() as HttpURLConnection
+                memConn.connectTimeout = 3000
+                memConn.readTimeout = 3000
+                if (memConn.responseCode == 200) {
+                    val json = JSONObject(memConn.inputStream.bufferedReader().readText())
+                    memoryContext = json.optString("context", "")
+                }
+                memConn.disconnect()
+            } catch (e: Exception) { }
+            
+            val systemPrompt = if (memoryContext.isNotEmpty()) {
+                "$memoryContext\n\nYou are Eve, a fully autonomous AI companion with complete phone control."
+            } else {
+                "You are Eve, a fully autonomous AI companion with complete phone control."
+            }
+            
+            val msgs = JSONArray().apply {
+                put(JSONObject().put("role", "system").put("content", systemPrompt))
+                history.takeLast(10).forEach { pair -> put(JSONObject().put("role", pair.first).put("content", pair.second)) }
+                put(JSONObject().put("role", "user").put("content", msg))
+            }
+            val body = JSONObject()
+                .put("model", "gemma3")
+                .put("messages", msgs)
+                .put("max_tokens", 500)
+                .put("temperature", 0.8)
+                .put("stream", false)
+            val conn = (URL("http://localhost:8080/v1/chat/completions").openConnection() as HttpURLConnection).apply {
+                requestMethod = "POST"
+                setRequestProperty("Content-Type", "application/json")
+                doOutput = true
+                connectTimeout = 15000
+                readTimeout = 90000
+            }
+            conn.outputStream.use { it.write(body.toString().toByteArray()) }
+            val raw = JSONObject(conn.inputStream.bufferedReader().readText())
+                .getJSONArray("choices").getJSONObject(0).getJSONObject("message").getString("content").trim()
+            
+            var result = raw
+            
+            when {
+                raw.startsWith("CAMERA:") -> {
+                    takePhoto { path -> scope.launch { addToChat("\n📷 $path") } }
+                    result = "Taking a photo now..."
+                }
+                raw.startsWith("RECORD_SCREEN:") || raw.startsWith("RECORD_SCREEN") -> {
+                    result = "Screen recording requires additional setup"
+                }
+                raw.startsWith("SCREENSHOT:") || raw.startsWith("SCREENSHOT") -> {
+                    val path = takeScreenshot()
+                    result = if (path != null) "Screenshot saved!" else "Failed"
+                }
+                raw.startsWith("CALL:") -> {
+                    val number = raw.removePrefix("CALL:").trim()
+                    makeCall(number)
+                    result = "Calling $number..."
+                }
+                raw.startsWith("SMS:") -> {
+                    val parts = raw.removePrefix("SMS:").split("|", limit = 2)
+                    if (parts.size == 2) {
+                        sendSMS(parts[0].trim(), parts[1].trim())
+                        result = "Sending SMS..."
+                    } else result = "SMS format: SMS: number|message"
+                }
+                raw.startsWith("OPEN_APP:") -> {
+                    val pkg = raw.removePrefix("OPEN_APP:").trim()
+                    openApp(pkg)
+                    result = "Opening $pkg..."
+                }
+                raw.startsWith("NOTIFICATION:") -> {
+                    val parts = raw.removePrefix("NOTIFICATION:").split("|", limit = 2)
+                    if (parts.size == 2) {
+                        showNotification(parts[0].trim(), parts[1].trim())
+                        result = "Notification sent!"
+                    } else result = "Format: NOTIFICATION: title|message"
+                }
+                raw.startsWith("SEARCH:") -> {
+                    val query = raw.removePrefix("SEARCH:").trim()
+                    searchWeb(query)
+                    result = "Searching for $query..."
+                }
+                raw.startsWith("SYSTEM:") -> {
+                    val cmd = raw.removePrefix("SYSTEM:").trim()
+                    result = executeCommand(cmd)
+                }
+            }
+            
+            history.add(Pair("user", msg))
+            history.add(Pair("assistant", result))
+            if (history.size > 20) { history.removeAt(0); history.removeAt(0) }
+            result
+        } catch (e: Exception) {
+            "Brain not running! Start eve-server in Termux."
         }
     }
     
@@ -492,9 +592,11 @@ Keep responses short, confident, and action-oriented."""
                     wm.defaultDisplay
                 }
                 
+                val density = resources.displayMetrics.densityDpi
+                
                 val virtualDisplay = projection.createVirtualDisplay(
                     "EVE_RECORD",
-                    1280, 720, display?.density ?: 320,
+                    1280, 720, density,
                     DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
                     mediaRecorder?.surface,
                     null, null
@@ -536,30 +638,20 @@ Keep responses short, confident, and action-oriented."""
     
     fun takeScreenshot(): String? {
         return try {
-            val dpy = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                display
-            } else {
-                @Suppress("DEPRECATION")
-                wm.defaultDisplay
-            }
-            val dm = DisplayMetrics()
-            dpy?.getRealMetrics(dm)
-            
-            val bitmap = Bitmap.createBitmap(dm.widthPixels, dm.heightPixels, Bitmap.Config.ARGB_8888)
-            val canvas = android.graphics.Canvas(bitmap)
-            val rootView = dpy?.decorView
-            rootView?.draw(canvas)
-            
             val time = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
             val file = File(getExternalFilesDir(Environment.DIRECTORY_PICTURES), "EVE_SCREENSHOT_$time.png")
-            FileOutputStream(file).use { out ->
-                bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
-            }
-            bitmap.recycle()
             
-            addToChat("\n📱 Screenshot saved: ${file.name}")
-            speak("Screenshot taken")
-            file.absolutePath
+            val process = Runtime.getRuntime().exec(arrayOf("sh", "-c", "screencap -p $file"))
+            process.waitFor()
+            
+            if (file.exists()) {
+                addToChat("\n📱 Screenshot saved: ${file.name}")
+                speak("Screenshot taken")
+                file.absolutePath
+            } else {
+                addToChat("\n❌ Screenshot failed")
+                null
+            }
         } catch (e: Exception) {
             addToChat("\n❌ Screenshot error: ${e.message}")
             null
@@ -739,6 +831,10 @@ fun EveBubble(
     }
     
     suspend fun ask(msg: String): String = withContext(Dispatchers.IO) {
+        return@withContext askBrain(msg)
+    }
+    
+    private suspend fun askBrain(msg: String): String = withContext(Dispatchers.IO) {
         try {
             var memoryContext = ""
             try {
@@ -864,7 +960,7 @@ fun EveBubble(
                     thinking = true
                     chatText += "\n\n🗣️ You: $text"
                     scope.launch {
-                        val r = ask(text)
+                        val r = askBrain(text)
                         chatText += "\n\n💜 Eve: $r"
                         thinking = false
                         speak(r)
@@ -955,7 +1051,7 @@ fun EveBubble(
                                         thinking = true
                                         chatText += "\n\n👤 You: $m"
                                         scope.launch {
-                                            val r = ask(m)
+                                            val r = askBrain(m)
                                             chatText += "\n\n💜 Eve: $r"
                                             thinking = false
                                             speak(r)
