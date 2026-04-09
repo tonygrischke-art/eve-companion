@@ -15,9 +15,7 @@ import android.speech.*
 import android.speech.tts.TextToSpeech
 import android.util.*
 import android.util.Pair
-import android.view.Display
-import android.view.DisplayManager
-import android.view.WindowManager
+import android.view.*
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.*
@@ -800,8 +798,8 @@ fun EveBubble(
                 border = BorderStroke(1.dp, Color(0xFFBB00FF).copy(0.4f))
             ) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Row(Modifier.fillMaxWidth(), Arrangement.SpaceBetween, Alignment.CenterVertically) {
-                        Row(Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                             Text("EVE", fontSize = 11.sp, fontWeight = FontWeight.Black, letterSpacing = 4.sp, color = Color(0xFFBB00FF))
                             if (isRecording.value) Text("● REC", fontSize = 9.sp, color = Color.Red)
                         }
