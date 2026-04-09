@@ -838,12 +838,10 @@ fun EveBubble(
                 if (text.isNotBlank()) {
                     thinking = true
                     chatText += "\n\n🗣️ You: $text"
-                    scope.launch {
-                        val r = callBrain(text)
-                        chatText += "\n\n💜 Eve: $r"
-                        thinking = false
-                        speak(r)
-                    }
+                    val r = callBrain(text)
+                    chatText += "\n\n💜 Eve: $r"
+                    thinking = false
+                    speak(r)
                 }
                 recognizer.destroy()
             }
@@ -929,12 +927,10 @@ fun EveBubble(
                                         input = ""
                                         thinking = true
                                         chatText += "\n\n👤 You: $m"
-                                        scope.launch {
-                                            val r = callBrain(m)
-                                            chatText += "\n\n💜 Eve: $r"
-                                            thinking = false
-                                            speak(r)
-                                        }
+                                        val r = callBrain(m)
+                                        chatText += "\n\n💜 Eve: $r"
+                                        thinking = false
+                                        speak(r)
                                     }
                                 },
                             contentAlignment = Alignment.Center
