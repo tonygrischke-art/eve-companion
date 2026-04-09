@@ -658,6 +658,7 @@ Keep responses short, confident, and action-oriented."""
                         intent.putExtra("android.intent.extra.KEY_CONFIRM", false)
                         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                         startActivity(intent)
+                        "Shutting down..."
                     } catch (e: Exception) {
                         "Cannot shutdown without root"
                     }
@@ -668,6 +669,7 @@ Keep responses short, confident, and action-oriented."""
                         intent.putExtra("confirm", true)
                         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                         startActivity(intent)
+                        "Rebooting..."
                     } catch (e: Exception) {
                         "Cannot reboot without root"
                     }
@@ -729,10 +731,6 @@ fun EveBubble(
             delay(clean.length * 60L + 1000L)
             speaking = false
         }
-    }
-    
-    suspend fun ask(msg: String): String = withContext(Dispatchers.IO) {
-        return@withContext askBrain(msg)
     }
     
     private fun askBrain(msg: String): String = runBlocking {
