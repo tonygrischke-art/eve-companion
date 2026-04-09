@@ -930,8 +930,8 @@ fun EveBubble(
                         Box(
                             Modifier.size(40.dp)
                                 .background(
-                                    if (isRecording.value) Brush.radialGradient(listOf(Color(0xFFFF0000), Color(0xFFCC0000)))
-                                    else Brush.radialGradient(listOf(Color(0xFFBB00FF), Color(0xFF7700AA))),
+                                    if (isRecording.value) Brush.radialGradient(colors = listOf(Color(0xFFFF0000), Color(0xFFCC0000)))
+                                    else Brush.radialGradient(colors = listOf(Color(0xFFBB00FF), Color(0xFF7700AA))),
                                     CircleShape
                                 )
                                 .clickable { 
@@ -947,7 +947,7 @@ fun EveBubble(
                         }
                         Box(
                             Modifier.size(40.dp)
-                                .background(Brush.radialGradient(listOf(Color(0xFF00FFAA), Color(0xFF00AA66))), CircleShape)
+                                .background(Brush.radialGradient(colors = listOf(Color(0xFF00FFAA), Color(0xFF00AA66))), CircleShape)
                                 .clickable {
                                     if (input.isNotBlank() && !thinking) {
                                         val m = input.trim()
@@ -983,8 +983,8 @@ fun EveBubble(
                 .clickable { expanded = !expanded },
             Alignment.Center
         ) {
-            Box(Modifier.size(62.dp).background(Brush.radialGradient(listOf(Color(0xFFBB00FF).copy(glow * 0.4f), Color(0x00000000)), CircleShape))
-            Box(Modifier.size(48.dp).background(Brush.radialGradient(listOf(Color(0xFFEE88FF), Color(0xFFBB00FF), Color(0xFF7700AA))), CircleShape))
+            Box(Modifier.size(62.dp).background(Brush.radialGradient(colors = listOf(Color(0xFFBB00FF).copy(glow * 0.4f), Color(0x00000000))), CircleShape))
+            Box(Modifier.size(48.dp).background(Brush.radialGradient(colors = listOf(Color(0xFFEE88FF), Color(0xFFBB00FF), Color(0xFF7700AA))), CircleShape))
             Box(Modifier.size(12.dp).offset((-7).dp, (-7).dp).background(Color(0x66FFFFFF), CircleShape))
         }
     }
