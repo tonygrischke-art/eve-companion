@@ -920,8 +920,8 @@ fun EveBubble(
                             colors = OutlinedTextFieldDefaults.colors(
                                 focusedBorderColor = Color(0xFFBB00FF),
                                 unfocusedBorderColor = Color(0xFF553366),
-                                focusedTextColor = Color.White,
-                                unfocusedTextColor = Color.White
+                                focusedTextColor = Color(0xFFFFFFFF),
+                                unfocusedTextColor = Color(0xFFFFFFFF)
                             ),
                             shape = RoundedCornerShape(12.dp),
                             maxLines = 2,
@@ -983,9 +983,9 @@ fun EveBubble(
                 .clickable { expanded = !expanded },
             Alignment.Center
         ) {
-            Box(Modifier.size(62.dp).background(Brush.radialGradient(listOf(Color(0xFFBB00FF).copy(glow * 0.4f), Color.Transparent)), CircleShape))
+            Box(Modifier.size(62.dp).background(Brush.radialGradient(listOf(Color(0xFFBB00FF).copy(glow * 0.4f), Color(0x00000000)), CircleShape))
             Box(Modifier.size(48.dp).background(Brush.radialGradient(listOf(Color(0xFFEE88FF), Color(0xFFBB00FF), Color(0xFF7700AA))), CircleShape))
-            Box(Modifier.size(12.dp).offset((-7).dp, (-7).dp).background(Color.White.copy(0.4f), CircleShape))
+            Box(Modifier.size(12.dp).offset((-7).dp, (-7).dp).background(Color(0x66FFFFFF), CircleShape))
         }
     }
 }
