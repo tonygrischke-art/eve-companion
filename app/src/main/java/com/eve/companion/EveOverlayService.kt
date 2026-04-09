@@ -50,6 +50,7 @@ import java.net.URL
 import java.text.SimpleDateFormat
 import java.util.*
 import java.util.concurrent.*
+import java.nio.file.Files
 
 class EveOverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, SavedStateRegistryOwner {
     private val lc = LifecycleRegistry(this)
@@ -77,6 +78,63 @@ class EveOverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, SavedS
     
     private val history = mutableListOf<Pair<String, String>>()
     private val recentContext = mutableListOf<String>()
+    
+    private var audioRecorder: MediaRecorder? = null
+    private var audioFilePath: String? = null
+    
+    private fun startAudioRecording() {
+        try {
+            val time = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
+            audioFilePath = "/sdcard/EveAudio_$time.wav"
+            audioRecorder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                MediaRecorder(this)
+            } else {
+                @Suppress("DEPRECATION")
+                MediaRecorder()
+            }.apply {
+                setAudioSource(MediaRecorder.AudioSource.MIC)
+                setOutputFormat(MediaRecorder.OutputFormat.DEFAULT)
+                setAudioEncoder(MediaRecorder.AudioEncoder.DEFAULT)
+                setOutputFile(audioFilePath)
+                prepare()
+                start()
+            }
+        } catch (e: Exception) {
+            addToChat("\n❌ Audio error: ${e.message}")
+        }
+    }
+    
+    private fun stopAudioRecordingAndTranscribe(): String {
+        return try {
+            audioRecorder?.apply { stop(); release() }
+            audioRecorder = null
+            
+            val audioFile = audioFilePath ?: return "No audio file"
+            audioFilePath = null
+            
+            val url = URL("http://127.0.0.1:5001/inference")
+            val conn = url.openConnection() as HttpURLConnection
+            conn.requestMethod = "POST"
+            conn.doOutput = true
+            conn.setRequestProperty("Content-Type", "multipart/form-data; boundary=----EveBoundary")
+            
+            val fileBytes = Files.readAllBytes(java.nio.file.Paths.get(audioFile))
+            val body = java.io.ByteArrayOutputStream()
+            body.write("------EveBoundary\r\n".toByteArray())
+            body.write("Content-Disposition: form-data; name=\"file\"; filename=\"audio.wav\"\r\n".toByteArray())
+            body.write("Content-Type: audio/wav\r\n\r\n".toByteArray())
+            body.write(fileBytes)
+            body.write("\r\n------EveBoundary--\r\n".toByteArray())
+            
+            conn.outputStream.use { it.write(body.toByteArray()) }
+            
+            val response = conn.inputStream.bufferedReader().readText()
+            val json = JSONObject(response)
+            json.getString("text")
+        } catch (e: Exception) {
+            "STT error: ${e.message}"
+        }
+    }
     
     private val WAKE_PHRASES = listOf("hey eve", "eve", "hey there eve", "hello eve", "yo eve", "hi eve", "okay eve")
     
@@ -267,12 +325,33 @@ Keep responses short, confident, and action-oriented."""
         isRecording.value = false
         wakeRecognizer?.destroy()
         stopRecording()
+        audioRecorder?.apply { stop(); release() }
+        audioRecorder = null
         tts?.stop()
         tts?.shutdown()
         scope.cancel()
         lc.currentState = Lifecycle.State.DESTROYED
         try { wm.removeView(rootView) } catch (e: Exception) {}
         super.onDestroy()
+    }
+    
+    fun onMicPressed() {
+        if (isRecording.value) {
+            val text = stopAudioRecordingAndTranscribe()
+            isRecording.value = false
+            if (!text.startsWith("STT error") && !text.startsWith("No audio") && text.isNotBlank()) {
+                addToChat("\n\n🗣️ You: $text")
+                scope.launch {
+                    val r = ask(text)
+                    addToChat("\n\n💜 Eve: $r")
+                    speak(r)
+                }
+            }
+        } else {
+            startAudioRecording()
+            isRecording.value = true
+            addToChat("\n🎤 Recording... tap mic again to stop")
+        }
     }
     
     fun addToChat(text: String) {
@@ -661,10 +740,26 @@ fun EveBubble(
     
     suspend fun ask(msg: String): String = withContext(Dispatchers.IO) {
         try {
+            var memoryContext = ""
+            try {
+                val memConn = URL("http://127.0.0.1:5002/context").openConnection() as HttpURLConnection
+                memConn.connectTimeout = 3000
+                memConn.readTimeout = 3000
+                if (memConn.responseCode == 200) {
+                    val json = JSONObject(memConn.inputStream.bufferedReader().readText())
+                    memoryContext = json.optString("context", "")
+                }
+                memConn.disconnect()
+            } catch (e: Exception) { }
+            
+            val systemPrompt = if (memoryContext.isNotEmpty()) {
+                "$memoryContext\n\nYou are Eve, a fully autonomous AI companion with complete phone control."
+            } else {
+                "You are Eve, a fully autonomous AI companion with complete phone control."
+            }
+            
             val msgs = JSONArray().apply {
-                put(JSONObject().put("role", "system").put("content", (context as? EveOverlayService)?.let { 
-                    "You are Eve, a fully autonomous AI companion with complete phone control." 
-                } ?: "You are Eve."))
+                put(JSONObject().put("role", "system").put("content", systemPrompt))
                 history.takeLast(10).forEach { pair -> put(JSONObject().put("role", pair.first).put("content", pair.second)) }
                 put(JSONObject().put("role", "user").put("content", msg))
             }
@@ -835,14 +930,20 @@ fun EveBubble(
                         Box(
                             Modifier.size(40.dp)
                                 .background(
-                                    if (listening) Brush.radialGradient(listOf(Color(0xFF00FFAA), Color(0xFF00AA66)))
+                                    if (isRecording.value) Brush.radialGradient(listOf(Color(0xFFFF0000), Color(0xFFCC0000)))
                                     else Brush.radialGradient(listOf(Color(0xFFBB00FF), Color(0xFF7700AA))),
                                     CircleShape
                                 )
-                                .clickable { if (!thinking && !listening) startListening() },
+                                .clickable { 
+                                    (context as? EveOverlayService)?.let { service ->
+                                        if (!thinking) {
+                                            service.onMicPressed()
+                                        }
+                                    }
+                                },
                             contentAlignment = Alignment.Center
                         ) {
-                            Text("🎤", fontSize = 16.sp)
+                            Text(if (isRecording.value) "⬛" else "🎤", fontSize = 16.sp)
                         }
                         Box(
                             Modifier.size(40.dp)
