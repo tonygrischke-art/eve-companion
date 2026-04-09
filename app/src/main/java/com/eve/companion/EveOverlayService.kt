@@ -31,6 +31,7 @@ import androidx.core.app.NotificationCompat
 import androidx.lifecycle.*
 import androidx.savedstate.*
 import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.*
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -49,8 +50,42 @@ class EveOverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, SavedS
     private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
     private var tts: TextToSpeech? = null
     val ttsReady = mutableStateOf(false)
+    private var wakeRecognizer: SpeechRecognizer? = null
+    private var isWakeListening = false
+    private var lastWakeTime = 0L
 
-    private val SYSTEM = "You are Eve, a vibrant upbeat AI companion. Sharp, warm, playful. Short punchy sentences. Fully on-device and private. When asked to run a command, respond with: RUN: <command>. When asked to read a file, respond with: READ: <filepath>. When asked to write a file, respond with: WRITE: <filepath> | <content>."
+    private val WAKE_PHRASES = listOf(
+        "hey eve",
+        "hey eve ",
+        "eve",
+        "hey there eve",
+        "hello eve",
+        "yo eve",
+        "hi eve"
+    )
+
+    private val GREETINGS = listOf(
+        "Hey there, handsome.",
+        "Present and accounted for!",
+        "I'm here. What's on your mind?",
+        "Hey! Ready when you are.",
+        "Yo! Still here, always.",
+        "At your service.",
+        "Hey there! Miss me?",
+        "Right here. What do you need?",
+        "Hey! Let's do this.",
+        "I'm awake. Let's chat.",
+        "Hey handsome, what's up?",
+        "Present! What are we working on today?",
+        "Yo! The AI is online.",
+        "Hey! Ready to conquer the galaxy?",
+        "Hey there. Long time no see!",
+        "I'm listening. Go ahead.",
+        "Hey! Your wish is my command.",
+        "Here I am! What's next?"
+    )
+
+    private val SYSTEM = "You are Eve, a vibrant upbeat AI companion. Sharp, warm, playful. Short punchy sentences. Fully on-device and private. When asked to run a command, respond with: RUN: <command>. When asked to read a file, respond with: READ: <filepath>. When asked to write a file, respond with: WRITE: <filepath> | <content>. Keep responses short and punchy."
 
     override fun onCreate() {
         super.onCreate()
@@ -93,18 +128,93 @@ class EveOverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, SavedS
                         tts = tts,
                         ttsReady = ttsReady,
                         context = this@EveOverlayService,
-                        onClose = { stopSelf() }
+                        onClose = { stopSelf() },
+                        service = this@EveOverlayService
                     )
                 }
             }
         }
         wm.addView(rootView, params)
         lc.currentState = Lifecycle.State.RESUMED
+        startWakeDetection()
+    }
+
+    private fun startWakeDetection() {
+        if (wakeRecognizer != null) return
+        wakeRecognizer = SpeechRecognizer.createSpeechRecognizer(this)
+        listenForWake()
+    }
+
+    private fun listenForWake() {
+        if (!isWakeListening || wakeRecognizer == null) return
+        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.US.toString())
+            putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
+            putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+        }
+        wakeRecognizer?.setRecognitionListener(object : RecognitionListener {
+            override fun onReadyForSpeech(p: Bundle?) {}
+            override fun onBeginningOfSpeech() {}
+            override fun onRmsChanged(v: Float) {}
+            override fun onBufferReceived(b: ByteArray?) {}
+            override fun onEndOfSpeech() {}
+            override fun onPartialResults(results: Bundle?) {
+                val texts = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION) ?: return
+                val heard = texts.firstOrNull()?.lowercase(Locale.US) ?: return
+                checkWakePhrase(heard)
+            }
+            override fun onResults(results: Bundle?) {
+                val texts = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION) ?: return
+                val heard = texts.firstOrNull()?.lowercase(Locale.US) ?: return
+                checkWakePhrase(heard)
+                if (isWakeListening) {
+                    scope.launch {
+                        delay(300)
+                        listenForWake()
+                    }
+                }
+            }
+            override fun onError(error: Int) {
+                if (error != 7 && error != 8) {
+                    isWakeListening = false
+                    scope.launch {
+                        delay(500)
+                        if (isWakeListening) listenForWake()
+                    }
+                } else {
+                    if (isWakeListening) listenForWake()
+                }
+            }
+            override fun onEvent(t: Int, p: Bundle?) {}
+        })
+        wakeRecognizer?.startListening(intent)
+    }
+
+    private fun checkWakePhrase(heard: String) {
+        if (!WAKE_PHRASES.any { heard.startsWith(it) || heard.contains(it) }) return
+        val now = System.currentTimeMillis()
+        if (now - lastWakeTime < 3000) return
+        lastWakeTime = now
+        isWakeListening = false
+        wakeRecognizer?.destroy()
+        wakeRecognizer = null
+        val greeting = GREETINGS.random()
+        scope.launch {
+            addToChat("\nEve: $greeting")
+            speak(greeting)
+            delay(500)
+            isWakeListening = true
+            startWakeDetection()
+        }
     }
 
     override fun onBind(i: Intent?): IBinder? = null
 
     override fun onDestroy() {
+        isWakeListening = false
+        wakeRecognizer?.destroy()
+        wakeRecognizer = null
         tts?.stop()
         tts?.shutdown()
         scope.cancel()
@@ -112,6 +222,20 @@ class EveOverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, SavedS
         wm.removeView(rootView)
         super.onDestroy()
     }
+
+    private var chat = MutableStateFlow("Eve: Hey! I am Eve. What is up?")
+
+    fun getGreeting(): String = GREETINGS.random()
+    fun speak(text: String) {
+        if (ttsReady.value) {
+            val clean = text.replace(Regex("[*#`]"), "")
+            tts?.speak(clean, TextToSpeech.QUEUE_FLUSH, null, "eve_${System.currentTimeMillis()}")
+        }
+    }
+    fun addToChat(text: String) {
+        chat.value += text
+    }
+    fun getChat(): StateFlow<String> = chat
 }
 
 fun executeAction(reply: String, context: Context): String {
@@ -152,7 +276,8 @@ fun EveBubble(
     tts: TextToSpeech?,
     ttsReady: MutableState<Boolean>,
     context: Context,
-    onClose: () -> Unit
+    onClose: () -> Unit,
+    service: EveOverlayService? = null
 ) {
     var expanded by remember { mutableStateOf(false) }
     var chat by remember { mutableStateOf("Eve: Hey! I am Eve. What is up?") }
@@ -165,15 +290,31 @@ fun EveBubble(
     val pulse by inf.animateFloat(1f, 1.12f, infiniteRepeatable(tween(1600), RepeatMode.Reverse), label = "p")
     val glow by inf.animateFloat(0.5f, 1f, infiniteRepeatable(tween(2000), RepeatMode.Reverse), label = "g")
 
+    LaunchedEffect(service) {
+        service?.getChat()?.collect { newChat ->
+            chat = newChat
+        }
+    }
+
     fun speak(text: String) {
-        if (ttsReady.value) {
-            speaking = true
-            val clean = text.replace(Regex("[*#`]"), "")
-            tts?.speak(clean, TextToSpeech.QUEUE_FLUSH, null, "eve_${System.currentTimeMillis()}")
-            scope.launch {
-                delay(clean.length * 60L + 1000L)
-                speaking = false
+        service?.speak(text) ?: run {
+            if (ttsReady.value) {
+                speaking = true
+                val clean = text.replace(Regex("[*#`]"), "")
+                tts?.speak(clean, TextToSpeech.QUEUE_FLUSH, null, "eve_${System.currentTimeMillis()}")
+                scope.launch {
+                    delay(clean.length * 60L + 1000L)
+                    speaking = false
+                }
             }
+        }
+    }
+
+    fun addToChat(text: String) {
+        if (service != null) {
+            service.addToChat(text)
+        } else {
+            chat += text
         }
     }
 
@@ -224,10 +365,10 @@ fun EveBubble(
                 listening = false
                 if (text.isNotBlank()) {
                     thinking = true
-                    chat += "\nYou: $text"
+                    addToChat("\nYou: $text")
                     scope.launch {
                         val r = ask(text)
-                        chat += "\nEve: $r"
+                        addToChat("\nEve: $r")
                         thinking = false
                         speak(r)
                     }
@@ -306,10 +447,10 @@ fun EveBubble(
                                         val m = input.trim()
                                         input = ""
                                         thinking = true
-                                        chat += "\nYou: $m"
+                                        addToChat("\nYou: $m")
                                         scope.launch {
                                             val r = ask(m)
-                                            chat += "\nEve: $r"
+                                            addToChat("\nEve: $r")
                                             thinking = false
                                             speak(r)
                                         }
