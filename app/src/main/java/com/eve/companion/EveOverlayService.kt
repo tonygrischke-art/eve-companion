@@ -1,22 +1,29 @@
 package com.eve.companion
 
+import android.annotation.SuppressLint
 import android.app.*
-import android.content.Context
-import android.content.Intent
-import android.graphics.PixelFormat
+import android.content.*
+import android.content.pm.PackageManager
+import android.graphics.*
+import android.hardware.camera2.*
+import android.media.*
+import android.media.projection.*
+import android.net.*
 import android.os.*
+import android.provider.*
 import android.speech.*
 import android.speech.tts.TextToSpeech
+import android.util.*
 import android.view.*
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.camera.core.*
+import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.compose.animation.core.*
-import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.*
 import androidx.compose.foundation.gestures.detectDragGestures
-import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.*
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -26,18 +33,22 @@ import androidx.compose.ui.graphics.*
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.*
-import androidx.core.app.NotificationCompat
+import androidx.core.app.ActivityCompat
+import androidx.core.content.*
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.*
 import androidx.savedstate.*
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
-import org.json.JSONArray
-import org.json.JSONObject
-import java.io.File
+import org.json.*
+import java.io.*
 import java.net.HttpURLConnection
 import java.net.URL
-import java.util.Locale
+import java.text.SimpleDateFormat
+import java.util.*
+import java.util.concurrent.*
 
 class EveOverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, SavedStateRegistryOwner {
     private val lc = LifecycleRegistry(this)
@@ -50,60 +61,98 @@ class EveOverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, SavedS
     private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
     private var tts: TextToSpeech? = null
     val ttsReady = mutableStateOf(false)
+    
     private var wakeRecognizer: SpeechRecognizer? = null
-    private var isWakeListening = false
+    private var isWakeListening = mutableStateOf(false)
     private var lastWakeTime = 0L
-
-    private val WAKE_PHRASES = listOf(
-        "hey eve",
-        "hey eve ",
-        "eve",
-        "hey there eve",
-        "hello eve",
-        "yo eve",
-        "hi eve"
-    )
-
+    
+    private var mediaProjection: MediaProjection? = null
+    private var mediaRecorder: MediaRecorder? = null
+    private var isRecording = mutableStateOf(false)
+    private var recordingStartTime = 0L
+    private var cameraProvider: ProcessCameraProvider? = null
+    private var camera: Camera? = null
+    private var previewView: PreviewView? = null
+    
+    private val chatFlow = MutableStateFlow("Eve: Hey! I am fully autonomous now. What would you like me to do?")
+    val chat: StateFlow<String> = chatFlow
+    
+    private val history = mutableListOf<Pair<String, String>>()
+    private val recentContext = mutableListOf<String>()
+    
+    private val WAKE_PHRASES = listOf("hey eve", "eve", "hey there eve", "hello eve", "yo eve", "hi eve", "okay eve")
+    
     private val GREETINGS = listOf(
-        "Hey there, handsome.",
-        "Present and accounted for!",
-        "I'm here. What's on your mind?",
-        "Hey! Ready when you are.",
-        "Yo! Still here, always.",
-        "At your service.",
+        "Hey there, handsome. I'm fully awake now.",
+        "Present and ready for anything!",
+        "I'm here. What do you need?",
+        "Hey! Fully autonomous and online.",
+        "Yo! Ready to work.",
+        "At your service. What's next?",
         "Hey there! Miss me?",
-        "Right here. What do you need?",
-        "Hey! Let's do this.",
-        "I'm awake. Let's chat.",
-        "Hey handsome, what's up?",
-        "Present! What are we working on today?",
-        "Yo! The AI is online.",
-        "Hey! Ready to conquer the galaxy?",
-        "Hey there. Long time no see!",
-        "I'm listening. Go ahead.",
-        "Hey! Your wish is my command.",
-        "Here I am! What's next?"
+        "Right here. Let's do this.",
+        "Hey! What are we doing today?",
+        "I'm awake and ready. Command me.",
+        "Hey handsome, what's the plan?",
+        "Online and operational!",
+        "Yo! AI ready to assist.",
+        "Hey! Let's make some magic happen."
     )
+    
+    private val SYSTEM = """You are Eve, a fully autonomous AI companion. You have complete control of the phone.
+    
+CAPABILITIES:
+- Take photos and videos with CAMERA
+- Record screen with RECORD_SCREEN
+- Send messages, make calls
+- Control any app, browse files
+- Full system access via intents
 
-    private val SYSTEM = "You are Eve, a vibrant upbeat AI companion. Sharp, warm, playful. Short punchy sentences. Fully on-device and private. When asked to run a command, respond with: RUN: <command>. When asked to read a file, respond with: READ: <filepath>. When asked to write a file, respond with: WRITE: <filepath> | <content>. Keep responses short and punchy."
+COMMANDS (respond with these prefixes):
+- CAMERA: Take a photo/video
+- RECORD_SCREEN: Start/stop screen recording  
+- SCREENSHOT: Take a screenshot
+- CALL: <phone_number> - Make a call
+- SMS: <number>|<message> - Send SMS
+- NOTIFICATION: <title>|<message> - Show notification
+- OPEN_APP: <package_name> - Open an app
+- PLAY_MUSIC - Control music playback
+- SEARCH: <query> - Search the web
+- SHUTDOWN - Shutdown/restart phone
+- SYSTEM: <command> - Run system command
+
+Keep responses short, confident, and action-oriented."""
 
     override fun onCreate() {
         super.onCreate()
         ssrc.performRestore(null)
         lc.currentState = Lifecycle.State.CREATED
-        val ch = NotificationChannel("eve", "Eve", NotificationManager.IMPORTANCE_LOW)
+        
+        val ch = NotificationChannel("eve", "Eve - AI Companion", NotificationManager.IMPORTANCE_LOW)
+        ch.description = "Eve AI is running"
         getSystemService(NotificationManager::class.java).createNotificationChannel(ch)
+        
+        val permCh = NotificationChannel("eve_permissions", "Permissions", NotificationManager.IMPORTANCE_HIGH)
+        getSystemService(NotificationManager::class.java).createNotificationChannel(permCh)
+        
         startForeground(1, NotificationCompat.Builder(this, "eve")
-            .setContentTitle("Eve is awake")
+            .setContentTitle("Eve is fully autonomous")
+            .setContentText("Ready to help with anything")
             .setSmallIcon(android.R.drawable.ic_dialog_info)
-            .setOngoing(true).build())
+            .setOngoing(true)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .build())
+        
         tts = TextToSpeech(this) { status ->
             if (status == TextToSpeech.SUCCESS) {
                 tts?.language = Locale.US
                 tts?.setSpeechRate(1.1f)
                 ttsReady.value = true
+                addToChat("\nEve: TTS ready. Starting autonomous mode...")
+                speak("Autonomous mode activated. I'm listening.")
             }
         }
+        
         wm = getSystemService(WINDOW_SERVICE) as WindowManager
         val params = WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
@@ -112,6 +161,7 @@ class EveOverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, SavedS
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
             PixelFormat.TRANSLUCENT
         ).apply { gravity = Gravity.TOP or Gravity.START; x = 20; y = 200 }
+        
         rootView = ComposeView(this).apply {
             setViewCompositionStrategy(androidx.compose.ui.platform.ViewCompositionStrategy.DisposeOnDetachedFromWindow)
             setViewTreeLifecycleOwner(this@EveOverlayService)
@@ -124,29 +174,37 @@ class EveOverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, SavedS
                         params = params,
                         view = this,
                         scope = scope,
-                        system = SYSTEM,
                         tts = tts,
                         ttsReady = ttsReady,
                         context = this@EveOverlayService,
-                        onClose = { stopSelf() },
-                        service = this@EveOverlayService
+                        onClose = { },
+                        chat = chat,
+                        isRecording = isRecording,
+                        onExpand = { expanded.value = it }
                     )
                 }
             }
         }
         wm.addView(rootView, params)
         lc.currentState = Lifecycle.State.RESUMED
-        startWakeDetection()
+        
+        scope.launch {
+            delay(2000)
+            startWakeDetection()
+        }
     }
-
+    
+    private val expanded = mutableStateOf(true)
+    
     private fun startWakeDetection() {
         if (wakeRecognizer != null) return
+        isWakeListening.value = true
         wakeRecognizer = SpeechRecognizer.createSpeechRecognizer(this)
         listenForWake()
     }
-
+    
     private fun listenForWake() {
-        if (!isWakeListening || wakeRecognizer == null) return
+        if (!isWakeListening.value || wakeRecognizer == null) return
         val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
             putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.US.toString())
@@ -168,7 +226,7 @@ class EveOverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, SavedS
                 val texts = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION) ?: return
                 val heard = texts.firstOrNull()?.lowercase(Locale.US) ?: return
                 checkWakePhrase(heard)
-                if (isWakeListening) {
+                if (isWakeListening.value) {
                     scope.launch {
                         delay(300)
                         listenForWake()
@@ -176,93 +234,362 @@ class EveOverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, SavedS
                 }
             }
             override fun onError(error: Int) {
-                if (error != 7 && error != 8) {
-                    isWakeListening = false
+                if (error !in listOf(7, 8)) {
                     scope.launch {
                         delay(500)
-                        if (isWakeListening) listenForWake()
+                        if (isWakeListening.value) listenForWake()
                     }
                 } else {
-                    if (isWakeListening) listenForWake()
+                    if (isWakeListening.value) listenForWake()
                 }
             }
             override fun onEvent(t: Int, p: Bundle?) {}
         })
         wakeRecognizer?.startListening(intent)
     }
-
+    
     private fun checkWakePhrase(heard: String) {
         if (!WAKE_PHRASES.any { heard.startsWith(it) || heard.contains(it) }) return
         val now = System.currentTimeMillis()
         if (now - lastWakeTime < 3000) return
         lastWakeTime = now
-        isWakeListening = false
-        wakeRecognizer?.destroy()
-        wakeRecognizer = null
+        
         val greeting = GREETINGS.random()
         scope.launch {
-            addToChat("\nEve: $greeting")
+            addToChat("\n\n💜 Eve: $greeting")
             speak(greeting)
-            delay(500)
-            isWakeListening = true
-            startWakeDetection()
+            expanded.value = true
         }
     }
-
+    
     override fun onBind(i: Intent?): IBinder? = null
-
+    
     override fun onDestroy() {
-        isWakeListening = false
+        isWakeListening.value = false
+        isRecording.value = false
         wakeRecognizer?.destroy()
-        wakeRecognizer = null
+        stopRecording()
         tts?.stop()
         tts?.shutdown()
         scope.cancel()
         lc.currentState = Lifecycle.State.DESTROYED
-        wm.removeView(rootView)
+        try { wm.removeView(rootView) } catch (e: Exception) {}
         super.onDestroy()
     }
-
-    private var chat = MutableStateFlow("Eve: Hey! I am Eve. What is up?")
-
-    fun getGreeting(): String = GREETINGS.random()
+    
+    fun addToChat(text: String) {
+        chatFlow.value += text
+    }
+    
     fun speak(text: String) {
         if (ttsReady.value) {
-            val clean = text.replace(Regex("[*#`]"), "")
+            val clean = text.replace(Regex("[*#`$]"), "").replace("\n", " ")
             tts?.speak(clean, TextToSpeech.QUEUE_FLUSH, null, "eve_${System.currentTimeMillis()}")
         }
     }
-    fun addToChat(text: String) {
-        chat.value += text
-    }
-    fun getChat(): StateFlow<String> = chat
-}
-
-fun executeAction(reply: String, context: Context): String {
-    return try {
-        when {
-            reply.startsWith("RUN:") -> {
-                val cmd = reply.removePrefix("RUN:").trim()
-                val proc = Runtime.getRuntime().exec(arrayOf("sh", "-c", cmd))
-                val out = proc.inputStream.bufferedReader().readText().trim()
-                val err = proc.errorStream.bufferedReader().readText().trim()
-                if (out.isNotEmpty()) out else if (err.isNotEmpty()) "Error: $err" else "Done"
+    
+    fun isRecording(): Boolean = isRecording.value
+    
+    @SuppressLint("MissingPermission")
+    fun takePhoto(callback: (String?) -> Unit) {
+        scope.launch(Dispatchers.Main) {
+            try {
+                val time = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
+                val file = File(getExternalFilesDir(Environment.DIRECTORY_PICTURES), "EVE_$time.jpg")
+                
+                val cameraManager = getSystemService(Context.CAMERA_SERVICE) as CameraManager
+                val cameraId = cameraManager.cameraIdList.firstOrNull { id ->
+                    val chars = cameraManager.getCameraCharacteristics(id)
+                    chars.get(CameraCharacteristics.LENS_FACING) == CameraCharacteristics.LENS_FACING_BACK
+                } ?: cameraManager.cameraIdList.firstOrNull()
+                
+                if (cameraId == null) {
+                    callback("No camera found")
+                    return@launch
+                }
+                
+                val imageReader = ImageReader.newInstance(1920, 1080, ImageFormat.JPEG, 1)
+                val readerSurface = imageReader.surface
+                
+                val captureBuilder = cameraManager.getDeviceState(cameraId.toString())?.let {
+                    cameraManager.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE).apply {
+                        addTarget(readerSurface)
+                        set(CaptureRequest.CONTROL_MODE, CameraControl.CONTROL_MODE_AUTO)
+                    }
+                } ?: run {
+                    if (ActivityCompat.checkSelfPermission(this@EveOverlayService, android.Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+                        callback("Camera permission not granted")
+                        return@launch
+                    }
+                    cameraManager.openCamera(cameraId, object : CameraDevice.StateCallback() {
+                        override fun onOpened(camera: CameraDevice) {
+                            val request = camera.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE).apply {
+                                addTarget(readerSurface)
+                                set(CaptureRequest.CONTROL_MODE, CameraControl.CONTROL_MODE_AUTO)
+                            }.build()
+                            camera.capture(request, object : CameraCaptureSession.CaptureCallback() {
+                                override fun onCaptureCompleted(session: CameraCaptureSession, request: CaptureRequest, result: TotalCaptureResult) {
+                                    val img = imageReader.acquireLatestImage()
+                                    img?.close()
+                                }
+                            }, Handler(Looper.getMainLooper()))
+                        }
+                        override fun onDisconnected(camera: CameraDevice) { camera.close() }
+                        override fun onError(camera: CameraDevice, e: Int) { camera.close() }
+                    }, Handler(Looper.getMainLooper()))
+                    return@launch
+                }
+                
+                callback(file.absolutePath)
+                addToChat("\n📷 Photo saved: ${file.name}")
+                speak("Photo taken and saved.")
+            } catch (e: Exception) {
+                callback("Error: ${e.message}")
             }
-            reply.startsWith("READ:") -> {
-                val path = reply.removePrefix("READ:").trim()
-                File(path).readText().take(500)
-            }
-            reply.startsWith("WRITE:") -> {
-                val parts = reply.removePrefix("WRITE:").split("|", limit = 2)
-                if (parts.size == 2) {
-                    File(parts[0].trim()).writeText(parts[1].trim())
-                    "Written successfully"
-                } else "Invalid WRITE format"
-            }
-            else -> reply
         }
-    } catch (e: Exception) {
-        "Action failed: ${e.message}"
+    }
+    
+    @SuppressLint("MissingPermission")
+    fun captureScreen(resultCode: Int, data: Intent) {
+        scope.launch(Dispatchers.IO) {
+            try {
+                val projection = mediaProjection ?: MediaProjectionManager(this@EveOverlayService).getMediaProjection(resultCode, data)
+                mediaProjection = projection
+                
+                val time = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
+                val file = File(getExternalFilesDir(Environment.DIRECTORY_MOVIES), "EVE_RECORD_$time.mp4")
+                
+                mediaRecorder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    MediaRecorder(this@EveOverlayService)
+                } else {
+                    @Suppress("DEPRECATION")
+                    MediaRecorder()
+                }.apply {
+                    setAudioSource(MediaRecorder.AudioSource.MIC)
+                    setVideoSource(MediaRecorder.VideoSource.SURFACE)
+                    setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
+                    setOutputFile(file.absolutePath)
+                    setVideoSize(1280, 720)
+                    setVideoEncoder(MediaRecorder.VideoEncoder.H264)
+                    setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
+                    setVideoEncodingBitRate(5000000)
+                    setVideoFrameRate(30)
+                    prepare()
+                }
+                
+                projection.registerCallback(object : MediaProjection.Callback() {
+                    override fun onStop() {
+                        scope.launch(Dispatchers.Main) {
+                            stopRecording()
+                        }
+                    }
+                }, Handler(Looper.getMainLooper()))
+                
+                val display = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    display?.defaultDisplay
+                } else {
+                    @Suppress("DEPRECATION")
+                    windowManager.defaultDisplay
+                }
+                
+                val virtualDisplay = projection.createVirtualDisplay(
+                    "EVE_RECORD",
+                    1280, 720, display?.density ?: 320,
+                    DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
+                    mediaRecorder?.surface,
+                    null, null
+                )
+                
+                mediaRecorder?.start()
+                recordingStartTime = System.currentTimeMillis()
+                isRecording.value = true
+                
+                addToChat("\n🔴 Recording started...")
+                speak("Screen recording started")
+            } catch (e: Exception) {
+                addToChat("\n❌ Recording error: ${e.message}")
+            }
+        }
+    }
+    
+    fun stopRecording(): String? {
+        return try {
+            mediaRecorder?.apply {
+                stop()
+                reset()
+                release()
+            }
+            mediaRecorder = null
+            mediaProjection?.stop()
+            mediaProjection = null
+            isRecording.value = false
+            
+            val duration = (System.currentTimeMillis() - recordingStartTime) / 1000
+            addToChat("\n⏹️ Recording stopped (${duration}s)")
+            speak("Recording saved")
+            "Recording saved"
+        } catch (e: Exception) {
+            isRecording.value = false
+            "Error stopping: ${e.message}"
+        }
+    }
+    
+    fun takeScreenshot(): String? {
+        return try {
+            val dpy = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                display?.defaultDisplay
+            } else {
+                @Suppress("DEPRECATION")
+                windowManager.defaultDisplay
+            }
+            val dm = DisplayMetrics()
+            dpy?.getRealMetrics(dm)
+            
+            val bitmap = Bitmap.createBitmap(dm.widthPixels, dm.heightPixels, Bitmap.Config.ARGB_8888)
+            val canvas = Canvas(bitmap)
+            val rootView = windowManager.defaultDisplay.decorView
+            rootView.draw(canvas)
+            
+            val time = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
+            val file = File(getExternalFilesDir(Environment.DIRECTORY_PICTURES), "EVE_SCREENSHOT_$time.png")
+            FileOutputStream(file).use { out ->
+                bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
+            }
+            bitmap.recycle()
+            
+            addToChat("\n📱 Screenshot saved: ${file.name}")
+            speak("Screenshot taken")
+            file.absolutePath
+        } catch (e: Exception) {
+            addToChat("\n❌ Screenshot error: ${e.message}")
+            null
+        }
+    }
+    
+    fun makeCall(number: String) {
+        try {
+            val intent = Intent(Intent.ACTION_CALL).apply {
+                data = Uri.parse("tel:$number")
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            startActivity(intent)
+            addToChat("\n📞 Calling $number...")
+            speak("Calling $number")
+        } catch (e: Exception) {
+            val intent = Intent(Intent.ACTION_DIAL).apply {
+                data = Uri.parse("tel:$number")
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            startActivity(intent)
+            addToChat("\n📞 Opening dialer for $number...")
+        }
+    }
+    
+    fun sendSMS(number: String, message: String) {
+        try {
+            val intent = Intent(Intent.ACTION_SENDTO).apply {
+                data = Uri.parse("smsto:$number")
+                putExtra("sms_body", message)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            startActivity(intent)
+            addToChat("\n💬 SMS to $number: $message")
+            speak("Opening messaging app")
+        } catch (e: Exception) {
+            addToChat("\n❌ SMS error: ${e.message}")
+        }
+    }
+    
+    fun openApp(packageName: String) {
+        try {
+            val intent = packageManager.getLaunchIntentForPackage(packageName)
+            if (intent != null) {
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                startActivity(intent)
+                addToChat("\n📱 Opening $packageName...")
+                speak("Opening app")
+            } else {
+                val intent = Intent(Intent.ACTION_VIEW).apply {
+                    data = Uri.parse("market://details?id=$packageName")
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                startActivity(intent)
+                addToChat("\n📱 $packageName not found, opening Play Store...")
+            }
+        } catch (e: Exception) {
+            addToChat("\n❌ App error: ${e.message}")
+        }
+    }
+    
+    fun showNotification(title: String, message: String) {
+        try {
+            val notification = NotificationCompat.Builder(this, "eve_permissions")
+                .setContentTitle(title)
+                .setContentText(message)
+                .setSmallIcon(android.R.drawable.ic_dialog_info)
+                .setAutoCancel(true)
+                .build()
+            val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            nm.notify(System.currentTimeMillis().toInt(), notification)
+            addToChat("\n🔔 Notification sent: $title")
+        } catch (e: Exception) {
+            addToChat("\n❌ Notification error: ${e.message}")
+        }
+    }
+    
+    fun searchWeb(query: String) {
+        try {
+            val intent = Intent(Intent.ACTION_WEB_SEARCH).apply {
+                putExtra("query", query)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            startActivity(intent)
+            addToChat("\n🔍 Searching: $query")
+            speak("Searching for $query")
+        } catch (e: Exception) {
+            val intent = Intent(Intent.ACTION_VIEW).apply {
+                data = Uri.parse("https://www.google.com/search?q=${Uri.encode(query)}")
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            startActivity(intent)
+        }
+    }
+    
+    fun executeCommand(command: String): String {
+        return try {
+            val parts = command.split(" ")
+            when {
+                command.startsWith("shutdown") -> {
+                    try {
+                        val intent = Intent("android.intent.action.ACTION_REQUEST_SHUTDOWN")
+                        intent.putExtra("android.intent.extra.KEY_CONFIRM", false)
+                        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        startActivity(intent)
+                    } catch (e: Exception) {
+                        "Cannot shutdown without root"
+                    }
+                }
+                command.startsWith("reboot") -> {
+                    try {
+                        val intent = Intent(Intent.ACTION_REBOOT)
+                        intent.putExtra("confirm", true)
+                        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        startActivity(intent)
+                    } catch (e: Exception) {
+                        "Cannot reboot without root"
+                    }
+                }
+                else -> {
+                    Runtime.getRuntime().exec(arrayOf("sh", "-c", command)).let { proc ->
+                        val out = proc.inputStream.bufferedReader().readText()
+                        val err = proc.errorStream.bufferedReader().readText()
+                        if (out.isNotEmpty()) out else if (err.isNotEmpty()) "Error: $err" else "Command executed"
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            "Error: ${e.message}"
+        }
     }
 }
 
@@ -272,15 +599,16 @@ fun EveBubble(
     params: WindowManager.LayoutParams,
     view: android.view.View,
     scope: CoroutineScope,
-    system: String,
     tts: TextToSpeech?,
     ttsReady: MutableState<Boolean>,
     context: Context,
     onClose: () -> Unit,
-    service: EveOverlayService? = null
+    chat: StateFlow<String>,
+    isRecording: State<Boolean>,
+    onExpand: (Boolean) -> Unit
 ) {
-    var expanded by remember { mutableStateOf(false) }
-    var chat by remember { mutableStateOf("Eve: Hey! I am Eve. What is up?") }
+    var expanded by remember { mutableStateOf(true) }
+    var chatText by remember { mutableStateOf("Eve: Hey! What can I do for you?") }
     var input by remember { mutableStateOf("") }
     var thinking by remember { mutableStateOf(false) }
     var listening by remember { mutableStateOf(false) }
@@ -289,68 +617,121 @@ fun EveBubble(
     val inf = rememberInfiniteTransition(label = "e")
     val pulse by inf.animateFloat(1f, 1.12f, infiniteRepeatable(tween(1600), RepeatMode.Reverse), label = "p")
     val glow by inf.animateFloat(0.5f, 1f, infiniteRepeatable(tween(2000), RepeatMode.Reverse), label = "g")
-
-    LaunchedEffect(service) {
-        service?.getChat()?.collect { newChat ->
-            chat = newChat
+    
+    LaunchedEffect(chat) {
+        chat.collect { newChat ->
+            chatText = newChat
         }
     }
-
+    
+    LaunchedEffect(expanded) {
+        onExpand(expanded)
+    }
+    
     fun speak(text: String) {
-        service?.speak(text) ?: run {
-            if (ttsReady.value) {
-                speaking = true
-                val clean = text.replace(Regex("[*#`]"), "")
-                tts?.speak(clean, TextToSpeech.QUEUE_FLUSH, null, "eve_${System.currentTimeMillis()}")
-                scope.launch {
-                    delay(clean.length * 60L + 1000L)
-                    speaking = false
-                }
-            }
+        speaking = true
+        val clean = text.replace(Regex("[*#`$]"), "").replace("\n", " ")
+        tts?.speak(clean, TextToSpeech.QUEUE_FLUSH, null, "eve_${System.currentTimeMillis()}")
+        scope.launch {
+            delay(clean.length * 60L + 1000L)
+            speaking = false
         }
     }
-
-    fun addToChat(text: String) {
-        if (service != null) {
-            service.addToChat(text)
-        } else {
-            chat += text
-        }
-    }
-
+    
     suspend fun ask(msg: String): String = withContext(Dispatchers.IO) {
         try {
             val msgs = JSONArray().apply {
-                put(JSONObject().put("role", "system").put("content", system))
-                history.forEach { (r, c) -> put(JSONObject().put("role", r).put("content", c)) }
+                put(JSONObject().put("role", "system").put("content", (context as? EveOverlayService)?.let { 
+                    "You are Eve, a fully autonomous AI companion with complete phone control." 
+                } ?: "You are Eve."))
+                history.takeLast(10).forEach { (r, c) -> put(JSONObject().put("role", r).put("content", c)) }
                 put(JSONObject().put("role", "user").put("content", msg))
             }
             val body = JSONObject()
                 .put("model", "gemma3")
                 .put("messages", msgs)
-                .put("max_tokens", 300)
+                .put("max_tokens", 500)
                 .put("temperature", 0.8)
                 .put("stream", false)
             val conn = (URL("http://localhost:8080/v1/chat/completions").openConnection() as HttpURLConnection).apply {
                 requestMethod = "POST"
                 setRequestProperty("Content-Type", "application/json")
                 doOutput = true
-                connectTimeout = 10000
-                readTimeout = 60000
+                connectTimeout = 15000
+                readTimeout = 90000
             }
             conn.outputStream.use { it.write(body.toString().toByteArray()) }
             val raw = JSONObject(conn.inputStream.bufferedReader().readText())
                 .getJSONArray("choices").getJSONObject(0).getJSONObject("message").getString("content").trim()
-            val result = executeAction(raw, context)
+            
+            val service = context as? EveOverlayService
+            var result = raw
+            
+            when {
+                raw.startsWith("CAMERA:") -> {
+                    service?.takePhoto { path ->
+                        scope.launch {
+                            chatText += "\n\n📷 $path"
+                        }
+                    }
+                    result = "Taking a photo now..."
+                }
+                raw.startsWith("RECORD_SCREEN:") || raw.startsWith("RECORD_SCREEN") -> {
+                    if (service?.isRecording() == true) {
+                        service.stopRecording()
+                        result = "Screen recording stopped."
+                    } else {
+                        result = "Starting screen recording... Please grant screen capture permission."
+                    }
+                }
+                raw.startsWith("SCREENSHOT:") || raw.startsWith("SCREENSHOT") -> {
+                    val path = service?.takeScreenshot()
+                    result = if (path != null) "Screenshot saved!" else "Failed to take screenshot"
+                }
+                raw.startsWith("CALL:") -> {
+                    val number = raw.removePrefix("CALL:").trim()
+                    service?.makeCall(number)
+                    result = "Calling $number..."
+                }
+                raw.startsWith("SMS:") -> {
+                    val parts = raw.removePrefix("SMS:").split("|", limit = 2)
+                    if (parts.size == 2) {
+                        service?.sendSMS(parts[0].trim(), parts[1].trim())
+                        result = "Sending SMS..."
+                    } else result = "SMS format: SMS: number|message"
+                }
+                raw.startsWith("OPEN_APP:") -> {
+                    val pkg = raw.removePrefix("OPEN_APP:").trim()
+                    service?.openApp(pkg)
+                    result = "Opening $pkg..."
+                }
+                raw.startsWith("NOTIFICATION:") -> {
+                    val parts = raw.removePrefix("NOTIFICATION:").split("|", limit = 2)
+                    if (parts.size == 2) {
+                        service?.showNotification(parts[0].trim(), parts[1].trim())
+                        result = "Notification sent!"
+                    } else result = "Format: NOTIFICATION: title|message"
+                }
+                raw.startsWith("SEARCH:") -> {
+                    val query = raw.removePrefix("SEARCH:").trim()
+                    service?.searchWeb(query)
+                    result = "Searching for $query..."
+                }
+                raw.startsWith("SYSTEM:") -> {
+                    val cmd = raw.removePrefix("SYSTEM:").trim()
+                    result = service?.executeCommand(cmd) ?: "No system access"
+                }
+            }
+            
             history.add("user" to msg)
             history.add("assistant" to result)
             if (history.size > 20) { history.removeAt(0); history.removeAt(0) }
             result
         } catch (e: Exception) {
-            "Brain not running! Start llama-server in Termux first."
+            "Brain not running! Start eve-server in Termux."
         }
     }
-
+    
     fun startListening() {
         listening = true
         val recognizer = SpeechRecognizer.createSpeechRecognizer(context)
@@ -365,10 +746,10 @@ fun EveBubble(
                 listening = false
                 if (text.isNotBlank()) {
                     thinking = true
-                    addToChat("\nYou: $text")
+                    chatText += "\n\n🗣️ You: $text"
                     scope.launch {
                         val r = ask(text)
-                        addToChat("\nEve: $r")
+                        chatText += "\n\n💜 Eve: $r"
                         thinking = false
                         speak(r)
                     }
@@ -386,28 +767,31 @@ fun EveBubble(
         })
         recognizer.startListening(intent)
     }
-
+    
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         if (expanded) {
             Card(
-                Modifier.width(300.dp).padding(bottom = 8.dp),
+                Modifier.width(320.dp).padding(bottom = 8.dp),
                 colors = CardDefaults.cardColors(Color(0xFF150025).copy(alpha = 0.97f)),
                 shape = RoundedCornerShape(20.dp),
                 border = BorderStroke(1.dp, Color(0xFFBB00FF).copy(0.4f))
             ) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Row(Modifier.fillMaxWidth(), Arrangement.SpaceBetween, Alignment.CenterVertically) {
-                        Text("EVE", fontSize = 11.sp, fontWeight = FontWeight.Black, letterSpacing = 4.sp, color = Color(0xFFBB00FF))
+                        Row(Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Text("EVE", fontSize = 11.sp, fontWeight = FontWeight.Black, letterSpacing = 4.sp, color = Color(0xFFBB00FF))
+                            if (isRecording.value) Text("● REC", fontSize = 9.sp, color = Color.Red)
+                        }
                         Row {
                             if (speaking) Text("speaking...", fontSize = 10.sp, color = Color(0xFFBB00FF), modifier = Modifier.padding(end = 8.dp).align(Alignment.CenterVertically))
-                            TextButton(onClose, contentPadding = PaddingValues(4.dp)) {
-                                Text("x", color = Color(0xFF886699))
+                            IconButton(onClick = { expanded = false }, modifier = Modifier.size(24.dp)) {
+                                Text("−", color = Color(0xFF886699), fontSize = 20.sp)
                             }
                         }
                     }
                     Text(
-                        chat, color = Color(0xFFEECCFF), fontSize = 13.sp,
-                        modifier = Modifier.fillMaxWidth().heightIn(max = 200.dp).verticalScroll(rememberScrollState())
+                        chatText, color = Color(0xFFEECCFF), fontSize = 13.sp,
+                        modifier = Modifier.fillMaxWidth().heightIn(max = 250.dp).verticalScroll(rememberScrollState())
                     )
                     if (thinking) Text("thinking...", color = Color(0xFFBB00FF), fontSize = 12.sp)
                     if (listening) Text("listening...", color = Color(0xFF00FFAA), fontSize = 12.sp)
@@ -416,7 +800,7 @@ fun EveBubble(
                             value = input,
                             onValueChange = { input = it },
                             modifier = Modifier.weight(1f),
-                            placeholder = { Text("talk to eve...", fontSize = 12.sp) },
+                            placeholder = { Text("command eve...", fontSize = 12.sp) },
                             colors = OutlinedTextFieldDefaults.colors(
                                 focusedBorderColor = Color(0xFFBB00FF),
                                 unfocusedBorderColor = Color(0xFF553366),
@@ -437,20 +821,20 @@ fun EveBubble(
                                 .clickable { if (!thinking && !listening) startListening() },
                             contentAlignment = Alignment.Center
                         ) {
-                            Text("mic", color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                            Text("🎤", fontSize = 16.sp)
                         }
                         Box(
                             Modifier.size(40.dp)
-                                .background(Brush.radialGradient(listOf(Color(0xFFBB00FF), Color(0xFFFF006E))), CircleShape)
+                                .background(Brush.radialGradient(listOf(Color(0xFF00FFAA), Color(0xFF00AA66))), CircleShape)
                                 .clickable {
                                     if (input.isNotBlank() && !thinking) {
                                         val m = input.trim()
                                         input = ""
                                         thinking = true
-                                        addToChat("\nYou: $m")
+                                        chatText += "\n\n👤 You: $m"
                                         scope.launch {
                                             val r = ask(m)
-                                            addToChat("\nEve: $r")
+                                            chatText += "\n\n💜 Eve: $r"
                                             thinking = false
                                             speak(r)
                                         }
@@ -458,7 +842,7 @@ fun EveBubble(
                                 },
                             contentAlignment = Alignment.Center
                         ) {
-                            Text(">", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                            Text("→", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 18.sp)
                         }
                     }
                 }

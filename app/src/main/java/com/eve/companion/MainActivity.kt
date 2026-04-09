@@ -1,7 +1,10 @@
 package com.eve.companion
 
+import android.Manifest
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import android.widget.Toast
@@ -10,7 +13,6 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -24,106 +26,104 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.*
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
-import android.Manifest
-import android.content.pm.PackageManager
 
 class MainActivity : ComponentActivity() {
 
-    private val micPermissionLauncher = registerForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) { isGranted ->
-        if (isGranted) {
+    private val requiredPermissions = mutableListOf(
+        Manifest.permission.RECORD_AUDIO,
+        Manifest.permission.CAMERA,
+        Manifest.permission.READ_EXTERNAL_STORAGE,
+        Manifest.permission.WRITE_EXTERNAL_STORAGE,
+        Manifest.permission.CALL_PHONE,
+        Manifest.permission.SEND_SMS,
+        Manifest.permission.READ_CONTACTS
+    ).apply {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            add(Manifest.permission.READ_MEDIA_IMAGES)
+            add(Manifest.permission.READ_MEDIA_VIDEO)
+            add(Manifest.permission.READ_MEDIA_AUDIO)
+            add(Manifest.permission.POST_NOTIFICATIONS)
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            add(Manifest.permission.MANAGE_EXTERNAL_STORAGE)
+        }
+    }
+
+    private val permissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { permissions ->
+        val allGranted = permissions.values.all { it }
+        if (allGranted) {
             checkOverlayAndStart()
+        } else {
+            setContent { MaterialTheme { PermissionScreen(onRequest = { requestAllPermissions() }) } }
         }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        checkMicAndOverlay()
-    }
-
-    private fun checkMicAndOverlay() {
-        if (Settings.canDrawOverlays(this)) { 
-            checkMicPermissionAndStart()
-        } else {
-            setContent { MaterialTheme { EveHome { openOverlaySettings() } } }
-        }
-    }
-
-    private fun checkMicPermissionAndStart() {
-        when {
-            ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED -> {
-                startEve()
-            }
-            shouldShowRequestPermissionRationale(Manifest.permission.RECORD_AUDIO) -> {
-                setContent { MaterialTheme { EveHome(showMicRationale = true) { openOverlaySettings() } } }
-            }
-            else -> {
-                micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
-            }
-        }
+        checkOverlayAndStart()
     }
 
     private fun checkOverlayAndStart() {
         if (Settings.canDrawOverlays(this)) {
-            startEve()
+            requestPermissionsIfNeeded()
         } else {
-            setContent { MaterialTheme { EveHome { openOverlaySettings() } } }
+            setContent { MaterialTheme { SetupScreen(onSetup = { requestOverlay() }) } }
         }
+    }
+
+    private fun requestOverlay() {
+        try {
+            startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                Uri.parse("package:$packageName")).apply { 
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) 
+                })
+        } catch (e: Exception) {
+            Toast.makeText(this, "Please enable Display over other apps manually", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun requestPermissionsIfNeeded() {
+        val notGranted = requiredPermissions.filter {
+            ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
+        }
+        if (notGranted.isNotEmpty()) {
+            permissionLauncher.launch(notGranted.toTypedArray())
+        } else {
+            startEve()
+        }
+    }
+
+    private fun startEve() {
+        val serviceIntent = Intent(this, EveOverlayService::class.java)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            startForegroundService(serviceIntent)
+        } else {
+            startService(serviceIntent)
+        }
+        finish()
     }
 
     override fun onResume() {
         super.onResume()
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
-            checkOverlayAndStart()
+        if (Settings.canDrawOverlays(this)) {
+            val allGranted = requiredPermissions.all {
+                ContextCompat.checkSelfPermission(this, it) == PackageManager.PERMISSION_GRANTED
+            }
+            if (allGranted) {
+                startEve()
+            }
         }
-    }
-
-    private fun openAppSettings() {
-        Toast.makeText(this, "Enable Display over other apps for Eve", Toast.LENGTH_LONG).show()
-        try {
-            startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                Uri.parse("package:$packageName")).apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) })
-        } catch (e: Exception) {
-            try {
-                startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
-                    Uri.parse("package:$packageName")))
-            } catch (e2: Exception) { }
-        }
-    }
-
-    private fun openOverlaySettings() {
-        Toast.makeText(this, "Enable Display over other apps for Eve", Toast.LENGTH_LONG).show()
-        try {
-            startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                Uri.parse("package:$packageName")).apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) })
-        } catch (e: Exception) {
-            try {
-                startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
-                    Uri.parse("package:$packageName")))
-            } catch (e2: Exception) { }
-        }
-    }
-
-    private fun openMicSettings() {
-        Toast.makeText(this, "Enable Microphone permission for Eve", Toast.LENGTH_LONG).show()
-        try {
-            startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
-                Uri.parse("package:$packageName")))
-        } catch (e: Exception) { }
-    }
-
-    private fun startEve() {
-        ContextCompat.startForegroundService(this, Intent(this, EveOverlayService::class.java))
-        finish()
     }
 }
 
 @Composable
-fun EveHome(onLaunch: () -> Unit, showMicRationale: Boolean = false) {
+fun SetupScreen(onSetup: () -> Unit) {
     val inf = rememberInfiniteTransition(label = "p")
     val scale by inf.animateFloat(1f, 1.1f, infiniteRepeatable(tween(1800), RepeatMode.Reverse), label = "s")
     val glow by inf.animateFloat(0.4f, 1f, infiniteRepeatable(tween(2000), RepeatMode.Reverse), label = "g")
+    
     Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0xFF0A0010), Color(0xFF150025)))), Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(24.dp),
             modifier = Modifier.padding(24.dp)) {
@@ -133,15 +133,48 @@ fun EveHome(onLaunch: () -> Unit, showMicRationale: Boolean = false) {
                 Box(Modifier.size(22.dp).offset((-18).dp, (-18).dp).background(Color.White.copy(0.35f), CircleShape))
             }
             Text("EVE", fontSize = 48.sp, fontWeight = FontWeight.Black, letterSpacing = 14.sp, color = Color(0xFFEE88FF))
-            Text("local  private  always on", fontSize = 12.sp, color = Color(0xFFBB88CC), letterSpacing = 2.sp, textAlign = TextAlign.Center)
-            if (showMicRationale) {
-                Text("Microphone permission is required for voice", fontSize = 11.sp, color = Color(0xFFFF6666), textAlign = TextAlign.Center)
-            }
-            Text("Tap below then enable Display over other apps", fontSize = 11.sp, color = Color(0xFFBB88CC).copy(alpha = 0.7f), textAlign = TextAlign.Center)
-            Button(onClick = onLaunch, modifier = Modifier.fillMaxWidth(0.7f).height(54.dp),
+            Text("Fully Autonomous AI Companion", fontSize = 14.sp, color = Color(0xFFBB88CC), letterSpacing = 2.sp, textAlign = TextAlign.Center)
+            Spacer(Modifier.height(16.dp))
+            Text("Tap to enable Display over other apps", fontSize = 12.sp, color = Color(0xFFBB88CC).copy(alpha = 0.7f), textAlign = TextAlign.Center)
+            Button(onClick = onSetup, modifier = Modifier.fillMaxWidth(0.7f).height(54.dp),
                 colors = ButtonDefaults.buttonColors(Color(0xFFBB00FF)), shape = RoundedCornerShape(16.dp)) {
-                Text("OPEN SETTINGS", fontWeight = FontWeight.Bold, letterSpacing = 4.sp)
+                Text("SETUP EVE", fontWeight = FontWeight.Bold, letterSpacing = 4.sp)
+            }
+            Spacer(Modifier.height(8.dp))
+            Text("Powerful permissions required for full autonomous control", fontSize = 10.sp, color = Color(0xFF886699), textAlign = TextAlign.Center)
+        }
+    }
+}
+
+@Composable
+fun PermissionScreen(onRequest: () -> Unit) {
+    Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0xFF0A0010), Color(0xFF150025)))), Alignment.Center) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(16.dp),
+            modifier = Modifier.padding(24.dp)) {
+            Text("EVE", fontSize = 36.sp, fontWeight = FontWeight.Black, letterSpacing = 10.sp, color = Color(0xFFEE88FF))
+            Text("Permissions Required", fontSize = 14.sp, color = Color(0xFFBB88CC))
+            Spacer(Modifier.height(8.dp))
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                PermissionItem("🎤 Microphone", "Voice commands")
+                PermissionItem("📷 Camera", "Take photos & videos")
+                PermissionItem("📱 Screen", "Screen recording")
+                PermissionItem("📞 Phone", "Make calls")
+                PermissionItem("💬 SMS", "Send messages")
+                PermissionItem("📁 Storage", "Save files")
+            }
+            Spacer(Modifier.height(16.dp))
+            Button(onClick = onRequest, modifier = Modifier.fillMaxWidth(0.7f).height(48.dp),
+                colors = ButtonDefaults.buttonColors(Color(0xFFBB00FF)), shape = RoundedCornerShape(12.dp)) {
+                Text("GRANT ALL", fontWeight = FontWeight.Bold)
             }
         }
+    }
+}
+
+@Composable
+fun PermissionItem(icon: String, text: String) {
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text(icon, fontSize = 16.sp)
+        Text(text, fontSize = 12.sp, color = Color(0xFFEECCFF))
     }
 }
