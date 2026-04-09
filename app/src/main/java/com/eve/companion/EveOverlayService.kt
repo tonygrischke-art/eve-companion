@@ -896,7 +896,7 @@ fun EveBubble(
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                             Text("EVE", fontSize = 11.sp, fontWeight = FontWeight.Black, letterSpacing = 4.sp, color = Color(0xFFBB00FF))
-                            if (isRecording.value) Text("● REC", fontSize = 9.sp, color = Color.Red)
+                            if (isRecording.value) Text("● REC", fontSize = 9.sp, color = Color(0xFFFF0000))
                         }
                         Row {
                             if (speaking) Text("speaking...", fontSize = 10.sp, color = Color(0xFFBB00FF), modifier = Modifier.padding(end = 8.dp).align(Alignment.CenterVertically))
@@ -964,7 +964,7 @@ fun EveBubble(
                                 },
                             contentAlignment = Alignment.Center
                         ) {
-                            Text("→", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                            Text("→", color = Color(0xFFFFFFFF), fontWeight = FontWeight.Bold, fontSize = 18.sp)
                         }
                     }
                 }
