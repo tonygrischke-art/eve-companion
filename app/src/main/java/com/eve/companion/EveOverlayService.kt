@@ -15,13 +15,13 @@ import android.speech.*
 import android.speech.tts.TextToSpeech
 import android.util.*
 import android.util.Pair
-import android.view.*
 import android.view.Display
 import android.view.DisplayManager
 import android.view.WindowManager
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.*
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.shape.*
 import androidx.compose.foundation.shape.RoundedCornerShape
