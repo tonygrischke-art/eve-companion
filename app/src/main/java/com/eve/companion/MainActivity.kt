@@ -79,12 +79,14 @@ class MainActivity : ComponentActivity() {
 
     private fun requestOverlay() {
         try {
-            startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                Uri.parse("package:$packageName")).apply { 
-                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) 
-                })
+            val intent = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION).apply {
+                data = Uri.parse("package:$packageName")
+                // Remove NEW_TASK flag as it may cause issues with singleTask launchMode
+            }
+            startActivity(intent)
         } catch (e: Exception) {
-            Toast.makeText(this, "Please enable Display over other apps manually", Toast.LENGTH_LONG).show()
+            Log.e("Eve", "Failed to open overlay settings", e)
+            Toast.makeText(this, "Please enable Display over other apps manually in Settings > Apps > Special access", Toast.LENGTH_LONG).show()
         }
     }
 
