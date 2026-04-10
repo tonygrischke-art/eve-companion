@@ -44,9 +44,10 @@ class MainActivity : ComponentActivity() {
             add(Manifest.permission.READ_MEDIA_AUDIO)
             add(Manifest.permission.POST_NOTIFICATIONS)
         }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            add(Manifest.permission.MANAGE_EXTERNAL_STORAGE)
-        }
+        // Remove MANAGE_EXTERNAL_STORAGE - requires special handling
+        // if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+        //     add(Manifest.permission.MANAGE_EXTERNAL_STORAGE)
+        // }
     }
 
     private val permissionLauncher = registerForActivityResult(
