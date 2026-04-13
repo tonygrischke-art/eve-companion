@@ -182,74 +182,78 @@ Keep responses short, confident, and action-oriented."""
 
     override fun onCreate() {
         super.onCreate()
-        ssrc.performRestore(null)
-        lc.currentState = Lifecycle.State.CREATED
+        try {
+            ssrc.performRestore(null)
+            lc.currentState = Lifecycle.State.CREATED
+            
+            val ch = NotificationChannel("eve", "Eve - AI Companion", NotificationManager.IMPORTANCE_LOW)
+            ch.description = "Eve AI is running"
+            getSystemService(NotificationManager::class.java).createNotificationChannel(ch)
+            
+            val permCh = NotificationChannel("eve_permissions", "Permissions", NotificationManager.IMPORTANCE_HIGH)
+            getSystemService(NotificationManager::class.java).createNotificationChannel(permCh)
+            
+            startForeground(1, NotificationCompat.Builder(this, "eve")
+                .setContentTitle("Eve is fully autonomous")
+                .setContentText("Ready to help with anything")
+                .setSmallIcon(android.R.drawable.ic_dialog_info)
+                .setOngoing(true)
+                .setPriority(NotificationCompat.PRIORITY_LOW)
+                .build())
         
-        val ch = NotificationChannel("eve", "Eve - AI Companion", NotificationManager.IMPORTANCE_LOW)
-        ch.description = "Eve AI is running"
-        getSystemService(NotificationManager::class.java).createNotificationChannel(ch)
-        
-        val permCh = NotificationChannel("eve_permissions", "Permissions", NotificationManager.IMPORTANCE_HIGH)
-        getSystemService(NotificationManager::class.java).createNotificationChannel(permCh)
-        
-        startForeground(1, NotificationCompat.Builder(this, "eve")
-            .setContentTitle("Eve is fully autonomous")
-            .setContentText("Ready to help with anything")
-            .setSmallIcon(android.R.drawable.ic_dialog_info)
-            .setOngoing(true)
-            .setPriority(NotificationCompat.PRIORITY_LOW)
-            .build())
-        
-        tts = TextToSpeech(this) { status ->
-            if (status == TextToSpeech.SUCCESS) {
-                tts?.language = Locale.US
-                tts?.setSpeechRate(1.1f)
-                ttsReady.value = true
-                addToChat("\nEve: TTS ready. Starting autonomous mode...")
-                speak("Autonomous mode activated. I'm listening.")
+        try {
+            tts = TextToSpeech(this) { status ->
+                if (status == TextToSpeech.SUCCESS) {
+                    tts?.language = Locale.US
+                    tts?.setSpeechRate(1.1f)
+                    ttsReady.value = true
+                    addToChat("\nEve: TTS ready. Starting autonomous mode...")
+                    speak("Autonomous mode activated. I'm listening.")
+                } else {
+                    addToChat("\n⚠️ TTS failed to initialize")
+                }
             }
+        } catch (e: Exception) {
+            addToChat("\n⚠️ TTS Error: ${e.message}")
         }
         
-        wm = getSystemService(WINDOW_SERVICE) as WindowManager
-        val params = WindowManager.LayoutParams(
-            WindowManager.LayoutParams.WRAP_CONTENT,
-            WindowManager.LayoutParams.WRAP_CONTENT,
-            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
-            PixelFormat.TRANSLUCENT
-        ).apply { gravity = Gravity.TOP or Gravity.START; x = 20; y = 200 }
-        
-        rootView = ComposeView(this).apply {
-            setViewCompositionStrategy(androidx.compose.ui.platform.ViewCompositionStrategy.DisposeOnDetachedFromWindow)
-            setViewTreeLifecycleOwner(this@EveOverlayService)
-            setViewTreeViewModelStoreOwner(this@EveOverlayService)
-            setViewTreeSavedStateRegistryOwner(this@EveOverlayService)
-            setContent {
-                MaterialTheme {
-                    EveBubble(
-                        wm = wm,
-                        params = params,
-                        view = this,
-                        scope = scope,
-                        tts = tts,
-                        ttsReady = ttsReady,
-                        context = this@EveOverlayService,
-                        onClose = { },
-                        chat = chat,
-                        isRecording = isRecording,
-                        onExpand = { expanded.value = it },
-                        onMicPressed = { onMicPressed() },
-                        onSendMessage = { msg -> callBrain(msg) }
-                    )
+        try {
+                    MaterialTheme {
+                        EveBubble(
+                            wm = wm,
+                            params = params,
+                            view = this,
+                            scope = scope,
+                            tts = tts,
+                            ttsReady = ttsReady,
+                            context = this@EveOverlayService,
+                            onClose = { },
+                            chat = chat,
+                            isRecording = isRecording,
+                            onExpand = { expanded.value = it },
+                            onMicPressed = { onMicPressed() },
+                            onSendMessage = { msg -> callBrain(msg) }
+                        )
+                    }
+                } catch (e: Exception) {
+                    addToChat("\n❌ UI Error: ${e.message}")
                 }
             }
         }
-        wm.addView(rootView, params)
+        try {
+            wm.addView(rootView, params)
+        } catch (e: Exception) {
+            addToChat("\n❌ Window Error: ${e.message}")
+        }
         lc.currentState = Lifecycle.State.RESUMED
         
         scope.launch {
             delay(2000)
-            startWakeDetection()
+            try {
+                startWakeDetection()
+            } catch (e: Exception) {
+                addToChat("\n⚠️ Voice detection disabled: ${e.message}")
+            }
         }
     }
     
