@@ -1,7 +1,7 @@
 package com.eve.companion
 
 import android.Manifest
-import android.content.Intent
+import android.app.AlertDialog
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
@@ -45,10 +45,6 @@ class MainActivity : ComponentActivity() {
             add(Manifest.permission.READ_MEDIA_AUDIO)
             add(Manifest.permission.POST_NOTIFICATIONS)
         }
-        // Remove MANAGE_EXTERNAL_STORAGE - requires special handling
-        // if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-        //     add(Manifest.permission.MANAGE_EXTERNAL_STORAGE)
-        // }
     }
 
     private val permissionLauncher = registerForActivityResult(
@@ -69,6 +65,7 @@ class MainActivity : ComponentActivity() {
 
     private fun checkOverlayAndStart() {
         if (Settings.canDrawOverlays(this)) {
+            // Overlay permission already granted, proceed to request other permissions
             requestPermissionsIfNeeded()
         } else {
             setContent { MaterialTheme { SetupScreen(onSetup = { requestOverlay() }) } }
@@ -80,16 +77,34 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun requestOverlay() {
-        try {
-            val intent = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION).apply {
-                data = Uri.parse("package:$packageName")
-                // Remove NEW_TASK flag as it may cause issues with singleTask launchMode
-            }
-            startActivity(intent)
-        } catch (e: Exception) {
-            Log.e("Eve", "Failed to open overlay settings", e)
-            Toast.makeText(this, "Please enable Display over other apps manually in Settings > Apps > Special access", Toast.LENGTH_LONG).show()
+        // Check again if already granted
+        if (Settings.canDrawOverlays(this)) {
+            // Already granted, proceed
+            requestPermissionsIfNeeded()
+            return
         }
+
+        // Show dialog explaining what to do
+        AlertDialog.Builder(this)
+            .setTitle("Enable Overlay Permission")
+            .setMessage("Eve needs 'Display over other apps' permission.\n\n" +
+                    "1. Tap 'Open Settings'\n" +
+                    "2. Find 'Display over other apps'\n" +
+                    "3. Enable it for Eve\n" +
+                    "4. Come back here")
+            .setPositiveButton("Open Settings") { _, _ ->
+                try {
+                    val intent = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION).apply {
+                        data = Uri.parse("package:$packageName")
+                    }
+                    startActivity(intent)
+                } catch (e: Exception) {
+                    Log.e("Eve", "Failed to open overlay settings", e)
+                    Toast.makeText(this, "Please enable manually in Settings", Toast.LENGTH_LONG).show()
+                }
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
     }
 
     private fun requestPermissionsIfNeeded() {
@@ -115,12 +130,18 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        // Re-check overlay permission when returning from Settings
         if (Settings.canDrawOverlays(this)) {
-            val allGranted = requiredPermissions.all {
-                ContextCompat.checkSelfPermission(this, it) == PackageManager.PERMISSION_GRANTED
+            // Check if we were on setup screen
+            val notGranted = requiredPermissions.filter {
+                ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
             }
-            if (allGranted) {
+            if (notGranted.isEmpty()) {
+                // All permissions granted, start Eve
                 startEve()
+            } else {
+                // Need to check other permissions
+                checkOverlayAndStart()
             }
         }
     }
